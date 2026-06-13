@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 런타임 산출물 (수집/학습 결과 — 환경마다 다름)
+dataset/
+model.json
+
+# 로컬 설정 / OS / IDE
+.env
+.DS_Store
+.idea/

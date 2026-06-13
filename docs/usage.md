@@ -1,0 +1,69 @@
+# 사용법
+
+> 전제: 라즈베리파이에서 `sudo systemctl start pigpiod` 실행 상태. 핀 배치는 [hardware.md](hardware.md) 참고.
+>
+> 핀/데몬 호스트/경로 등 설정은 환경변수 또는 `.env`로 바꾼다(기본값은 단독 실행 기준). 전체 목록은 [hardware.md의 환경변수 표](hardware.md#설정--환경변수-configpy) 참고.
+
+## 1. 수집 — `ir_collect.py`
+
+`sweep.json`에 정의한 파라미터 조합을 돌며 설정당 8회 반복 수집해 `dataset/`에 저장한다.
+
+```bash
+# 먼저 sweep.json 을 리모컨에 맞게 편집 (axes: mode/temp/power ...)
+python3 ir_collect.py                     # 전체 스윕 수집
+python3 ir_collect.py --sweep my.json --out dataset
+```
+
+- 헤더 타이밍 하드코딩 없음 — 긴 무신호 갭으로만 전송 1회를 구분
+- 설정당 8회 반복 후 **반복 일치율(신뢰도)** 계산, 기준(기본 75%) 미달이면 자동 재촬영
+- 저장: `dataset/{라벨}.json` — `params` + `repeats`(raw 펄스 N회) + `confidence`
+- 반복 횟수/기준은 환경변수 `IR_REPEATS`, `IR_MIN_AGREE`로 조정
+
+## 2. 학습 — `ir_learn.py`
+
+`dataset/`를 자동 분석해 프로토콜 규칙 모델(`model.json`)을 만든다(하드웨어 불필요).
+
+```bash
+python3 ir_learn.py
+```
+
+- 반복본 다수결로 노이즈 제거, 신뢰도 낮은 설정 경고
+- 바이트별 자동 분류: 상수 / 필드(파라미터·선형/룩업) / 체크섬 / 미해독(complex)
+- 미해독 바이트가 0이면 완전 합성 가능, 남으면 그 프레임은 replay 필요
+
+## 3. 모니터 — `ir_monitor.py`
+
+버튼을 누르면 실시간으로 디코딩해 바이트로 표시한다(하드코딩 없는 QC 도구).
+
+```bash
+python3 ir_monitor.py
+```
+
+출력 예: `segs` 수 + 추정 임계값 + `F1`/`F2` 바이트 헥스. 신호가 제대로 들어오는지, 바이트가 안정적인지 빠르게 확인할 때 사용.
+
+## 4. 송신(제어) — `ir_send.py`
+
+`dataset/`의 저장 펄스를 재생해 에어컨을 제어한다.
+
+```bash
+python3 ir_send.py --list              # 수집된 설정 목록(+신뢰도)
+python3 ir_send.py 냉방 21 on          # dataset/냉방_21_on.json 재생
+python3 ir_send.py --label 냉방_21_on  # 라벨 직접 지정
+python3 ir_send.py 냉방 21 on --gpio 17 # 송신 핀 변경
+```
+
+- 위치인자를 `_`로 결합해 `dataset/{라벨}.json`을 찾는다(수집 시 `sweep.json` order 순서와 맞춰 입력)
+- 동작 방식: 저장된 `level 0 → 38kHz 캐리어 ON(mark)`, `level 1 → OFF(space)`로 변환해 pigpio wave API로 정확히 송신
+- 수집 안 한 조합의 **합성 송신**은 `ir_synth.py`(개발 중)로 추가 예정
+
+## 데이터 형식 한눈에
+
+```jsonc
+// dataset/냉방_21_on.json  (ir_collect.py 출력)
+{
+  "params": { "mode": "냉방", "temp": 21, "power": "on" },
+  "frame_gap_us": 30000, "glitch_us": 150,
+  "n_repeats": 8, "confidence": 1.0,
+  "repeats": [ [[0,6800],[1,3330], ...], ... ]   // 8회분 raw 펄스
+}
+```
