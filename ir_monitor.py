@@ -10,7 +10,7 @@ import sys
 
 import config
 import ir_codec
-from ir_collect import GapFramedCollector
+from ir_io import GapFramedCollector
 
 sys.stdout.reconfigure(line_buffering=True)
 

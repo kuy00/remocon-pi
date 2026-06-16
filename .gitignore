@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
 
 # 런타임 산출물 (수집/학습 결과 — 환경마다 다름)
 dataset/

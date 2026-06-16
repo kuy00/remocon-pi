@@ -235,14 +235,14 @@ def main():
         return
 
     import pigpio
-    import ir_send
+    from ir_io import transmit_segs
     pi = config.connect()
     try:
         pi.set_mode(args.gpio, pigpio.OUTPUT)
         pi.write(args.gpio, 0)
         pi.wave_clear()
         print(f"  송신 (GPIO {args.gpio}, segs={len(new_segs)}) ...")
-        ir_send.transmit_segs(pi, args.gpio, new_segs)
+        transmit_segs(pi, args.gpio, new_segs)
         print("  완료.")
     finally:
         pi.write(args.gpio, 0)

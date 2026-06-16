@@ -56,7 +56,8 @@ IR_TX_GPIO=17 python3 ir_send.py 난방 30 off
 | `ir_learn.py` | 학습 — `dataset/` 자동 분석(필드 발견·체크섬 탐색) → `model.json` |
 | `ir_synth.py` | 합성 — `model.json` 규칙 + 가장 가까운 수집본 템플릿으로 미수집 조합 신호 생성·송신 (위치 하드코딩 없음) |
 | `ir_send.py` | 송신 — 저장 펄스 재생(replay) + 합성 송신 |
-| `ir_codec.py` | 공통 — raw 펄스 ↔ 비트/바이트, 신뢰도 계산 |
+| `ir_codec.py` | 공통 — raw 펄스 ↔ 비트/바이트, 신뢰도 계산 (하드웨어 무관·순수 로직) |
+| `ir_io.py` | 공통 — pigpio 저수준 I/O: 수신 collector + 송신 캐리어/파형 |
 | `ir_monitor.py` | 모니터 — 실시간 디코딩 + 대조 검증 |
 | `config.py` | 설정 중앙 관리 (환경변수/`.env`) |
 
@@ -75,8 +76,18 @@ IR_TX_GPIO=17 python3 ir_send.py 난방 30 off
 - `dataset/` — `ir_collect.py` 출력. 설정별 `params` + 반복 raw 펄스 + 신뢰도 (gitignore 권장)
 - `model.json` — `ir_learn.py` 출력. 학습된 프로토콜 규칙
 
+## 테스트
+
+순수 로직(코덱·학습·합성)은 하드웨어 없이 검증된다. `pigpio` 불필요.
+
+```bash
+pip install -r requirements-dev.txt   # pytest
+pytest                                # tests/ 실행
+```
+
 ## 요구 사항
 
 - 라즈베리파이 (GPIO)
 - `pigpiod` 데몬 실행
 - Python 3, `pigpio` 패키지
+- (개발) `pytest` — `requirements-dev.txt`

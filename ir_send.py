@@ -13,62 +13,15 @@
 """
 import sys
 import json
-import time
 import argparse
 
 import pigpio
 
 import config
+from ir_io import transmit_segs, CARRIER_HZ
 
 TX_GPIO = config.IR_TX_GPIO      # IR LED (BCM)
-CARRIER_HZ = config.CARRIER_HZ   # 캐리어 주파수
-DUTY = 0.5                       # 캐리어 듀티비
-
 DATASET_DIR = config.DATASET_DIR
-
-
-def build_carrier(gpio, micros):
-    """micros 동안 지속되는 38kHz 캐리어 버스트(mark)용 펄스 리스트 생성."""
-    wf = []
-    cycle_us = 1_000_000.0 / CARRIER_HZ          # 약 26.3us
-    on_us = int(round(cycle_us * DUTY))
-    cycles = int(round(micros / cycle_us))
-    sofar = 0
-    for c in range(cycles):
-        target = int(round((c + 1) * cycle_us))
-        off_us = target - sofar - on_us
-        sofar = target
-        wf.append(pigpio.pulse(1 << gpio, 0, on_us))      # 핀 HIGH
-        wf.append(pigpio.pulse(0, 1 << gpio, off_us))     # 핀 LOW
-    return wf
-
-
-def build_space(gpio, micros):
-    """micros 동안 캐리어 OFF(space)."""
-    return [pigpio.pulse(0, 1 << gpio, int(micros))]
-
-
-def segs_to_wave(pi, gpio, segs):
-    """[ [level,us], ... ] → pigpio 파형 생성, wave id 반환."""
-    pulses = []
-    for level, us in segs:
-        if us <= 0:
-            continue
-        if level == 0:                 # 저장 level 0 = mark = 캐리어 ON
-            pulses += build_carrier(gpio, us)
-        else:                          # level 1 = space = 캐리어 OFF
-            pulses += build_space(gpio, us)
-    pi.wave_add_generic(pulses)
-    return pi.wave_create()
-
-
-def transmit_segs(pi, gpio, segs):
-    """단일 segs(프레임 묶음)를 송신."""
-    wid = segs_to_wave(pi, gpio, segs)
-    pi.wave_send_once(wid)
-    while pi.wave_tx_busy():
-        time.sleep(0.002)
-    pi.wave_delete(wid)
 
 
 def load_segs(label):

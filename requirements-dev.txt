@@ -1,0 +1,2 @@
+# 개발/테스트 의존성 (런타임용은 requirements.txt)
+pytest

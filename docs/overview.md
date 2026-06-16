@@ -28,7 +28,8 @@ ir_collect → ir_learn → (ir_synth) → ir_send
 | 3. 합성 | `ir_synth.py` | 가장 가까운 수집본을 템플릿으로 미수집 온도의 바이트→펄스 생성, 자가검증 |
 | 4. 송신 | `ir_send.py` | 저장 펄스 재생(replay) + 합성 송신 |
 | 보조 | `ir_monitor.py` | 실시간 디코딩/대조 검증 |
-| 공통 | `ir_codec.py` | raw 펄스 ↔ 비트/바이트, 다수결·신뢰도 |
+| 공통 | `ir_codec.py` | raw 펄스 ↔ 비트/바이트, 다수결·신뢰도 (순수 로직) |
+| 공통 | `ir_io.py` | pigpio 저수준 I/O — 수신 collector + 송신 캐리어/파형 |
 
 ### 핵심 설계
 - **헤더 타이밍 하드코딩 제거** — 긴 무신호 갭으로만 프레임 구분

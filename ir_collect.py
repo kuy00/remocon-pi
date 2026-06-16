@@ -14,78 +14,16 @@ import json
 import time
 import argparse
 from pathlib import Path
-from collections import deque
 from itertools import product
-
-import pigpio
 
 import config
 import ir_codec
+from ir_io import GapFramedCollector
 
 sys.stdout.reconfigure(line_buffering=True)
 
 N_REPEATS = config.REPEATS
 MIN_AGREE = config.MIN_AGREE     # 합의 신뢰도 하한 — 미달 시 계속 재촬영
-MIN_EDGES = 40                   # 노이즈로 보지 않을 최소 엣지 수
-FRAME_GAP_US = config.FRAME_GAP_US
-
-
-class GapFramedCollector:
-    """헤더 무관 — 조용한 갭으로 전송 1회(=프레임 묶음)를 구분해 수집."""
-
-    def __init__(self, pi, gpio):
-        self.pi = pi
-        self.gpio = gpio
-        self.edges = deque()
-        self.last_edge_mono = time.time()
-        self.frames = deque(maxlen=50)
-        self.cb = None
-
-    def start(self):
-        self.pi.set_mode(self.gpio, pigpio.INPUT)
-        self.pi.set_pull_up_down(self.gpio, pigpio.PUD_UP)
-        self.pi.set_glitch_filter(self.gpio, config.GLITCH_US)
-        self.cb = self.pi.callback(self.gpio, pigpio.EITHER_EDGE, self._cb)
-
-    def stop(self):
-        if self.cb:
-            self.cb.cancel()
-            self.cb = None
-
-    def clear(self):
-        self.edges.clear()
-        self.frames.clear()
-
-    def _cb(self, gpio, level, tick):
-        self.edges.append((level, tick))
-        self.last_edge_mono = time.time()
-
-    def poll(self):
-        """주기적으로 호출 — 조용한 갭이 지나면 누적 엣지를 프레임으로 확정."""
-        if len(self.edges) < 2:
-            return
-        quiet_us = (time.time() - self.last_edge_mono) * 1_000_000
-        if quiet_us < FRAME_GAP_US:
-            return
-        local = list(self.edges)
-        self.edges.clear()
-        if len(local) < MIN_EDGES:
-            return
-        segs = []
-        for i in range(1, len(local)):
-            lvl, t0 = local[i - 1]
-            _, t1 = local[i]
-            segs.append((lvl, pigpio.tickDiff(t0, t1)))
-        self.frames.append(segs)
-
-    def wait_one(self, timeout=None):
-        t_end = time.time() + timeout if timeout else None
-        while not self.frames:
-            self.poll()
-            if t_end and time.time() > t_end:
-                return None
-            time.sleep(0.005)
-        return self.frames.popleft()
 
 
 def load_sweep(path):
@@ -141,7 +79,7 @@ def save(out_dir, params, order, repeats, conf):
     fpath = out_dir / f"{label(params, order)}.json"
     fpath.write_text(json.dumps({
         "params": params,
-        "frame_gap_us": FRAME_GAP_US,
+        "frame_gap_us": config.FRAME_GAP_US,
         "glitch_us": config.GLITCH_US,
         "n_repeats": len(repeats),
         "confidence": round(conf, 4),
