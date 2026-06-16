@@ -9,7 +9,6 @@
 사용: python3 ir_collect.py            # sweep.json 전체 수집
       python3 ir_collect.py --sweep my.json --out dataset
 """
-import os
 import sys
 import json
 import time
@@ -25,10 +24,9 @@ import ir_codec
 
 sys.stdout.reconfigure(line_buffering=True)
 
-N_REPEATS = int(os.getenv("IR_REPEATS", "8"))
-MIN_AGREE = float(os.getenv("IR_MIN_AGREE", "0.75"))  # 합의 신뢰도 하한
-MAX_ATTEMPTS = 3        # 설정당 재촬영 최대 횟수
-MIN_EDGES = 40          # 노이즈로 보지 않을 최소 엣지 수
+N_REPEATS = config.REPEATS
+MIN_AGREE = config.MIN_AGREE     # 합의 신뢰도 하한 — 미달 시 계속 재촬영
+MIN_EDGES = 40                   # 노이즈로 보지 않을 최소 엣지 수
 FRAME_GAP_US = config.FRAME_GAP_US
 
 
@@ -104,12 +102,23 @@ def label(params, order):
 
 
 def capture_setting(rx, params, order):
-    """한 설정을 N회 반복 캡처. 신뢰도 미달 시 재촬영."""
+    """한 설정을 N회 반복 캡처. 신뢰도 기준 미달이면 통과할 때까지 계속 재촬영.
+
+    기준 미달 시 Enter 로 재촬영, 's' 입력 시 현재본을 저장하고 진행(수동 예외).
+    """
     name = label(params, order)
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f"\n>>> [{name}] 설정으로 리모컨을 맞춘 뒤 Enter "
-              f"(시도 {attempt}/{MAX_ATTEMPTS})")
-        input()
+    attempt = 0
+    last = None
+    while True:
+        attempt += 1
+        if last is None:
+            prompt = f"\n>>> [{name}] 설정으로 리모컨을 맞춘 뒤 Enter (시도 {attempt}): "
+        else:
+            prompt = (f"\n>>> [{name}] 기준({MIN_AGREE:.0%}) 미달 — "
+                      f"Enter=재촬영, s=현재본 저장하고 진행: ")
+        if input(prompt).strip().lower() == "s" and last is not None:
+            print(f"    수동 진행 — 신뢰도 {last[1]:.0%} 저장")
+            return last
         rx.clear()
         repeats = []
         while len(repeats) < N_REPEATS:
@@ -120,13 +129,11 @@ def capture_setting(rx, params, order):
             time.sleep(0.3)
             rx.clear()
         _, conf = ir_codec.consensus(repeats)
-        print(f"    신뢰도 {conf:.0%}", end=" ")
+        last = (repeats, conf)
         if conf >= MIN_AGREE:
-            print("→ 통과 ✅")
+            print(f"    신뢰도 {conf:.0%} → 통과 ✅")
             return repeats, conf
-        print(f"→ 기준({MIN_AGREE:.0%}) 미달, 재촬영 ⚠️")
-    print(f"    경고: {MAX_ATTEMPTS}회 시도 후에도 신뢰도 낮음 — 마지막 결과 저장")
-    return repeats, conf
+        print(f"    신뢰도 {conf:.0%} → 기준({MIN_AGREE:.0%}) 미달, 재촬영 ⚠️")
 
 
 def save(out_dir, params, order, repeats, conf):

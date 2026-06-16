@@ -15,9 +15,11 @@ python3 ir_collect.py --sweep my.json --out dataset
 ```
 
 - 헤더 타이밍 하드코딩 없음 — 긴 무신호 갭으로만 전송 1회를 구분
-- 설정당 8회 반복 후 **반복 일치율(신뢰도)** 계산, 기준(기본 75%) 미달이면 자동 재촬영
+- 설정당 8회 반복 후 **반복 일치율(신뢰도)** 계산, 기준(기본 **90%**) 미달이면 **통과할 때까지 재촬영**
+  (미달 화면에서 `Enter`=재촬영, `s`=현재본 저장하고 진행)
+- 수집 순서는 `sweep.json`의 `order`를 따른다 — 기본 `[mode, temp, power]`라 같은 온도의 **on→off가 교차**로 찍힌다
 - 저장: `dataset/{라벨}.json` — `params` + `repeats`(raw 펄스 N회) + `confidence`
-- 반복 횟수/기준은 환경변수 `IR_REPEATS`, `IR_MIN_AGREE`로 조정
+- 반복 횟수/기준은 `config.REPEATS`/`config.MIN_AGREE`(환경변수 `IR_REPEATS`, `IR_MIN_AGREE`)로 조정
 
 ## 2. 학습 — `ir_learn.py`
 

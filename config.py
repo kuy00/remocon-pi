@@ -42,6 +42,10 @@ FRAME_GAP_US = _int("IR_FRAME_GAP_US", 30000)
 DATASET_DIR = Path(os.getenv("IR_DATASET_DIR", "dataset"))   # ir_collect.py 출력
 MODEL_FILE = Path(os.getenv("IR_MODEL_FILE", "model.json"))  # ir_learn.py 출력
 
+# ── 수집 동작 ────────────────────────────────────────────
+REPEATS = _int("IR_REPEATS", 8)                       # 설정당 반복 수집 횟수
+MIN_AGREE = float(os.getenv("IR_MIN_AGREE", "0.9"))   # 합의 신뢰도 하한(미달 시 재촬영)
+
 
 def connect():
     """설정된 호스트/포트로 pigpio 데몬에 연결해 pi 객체 반환."""
