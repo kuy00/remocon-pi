@@ -17,7 +17,6 @@
 """
 import sys
 import json
-import glob
 import argparse
 from pathlib import Path
 

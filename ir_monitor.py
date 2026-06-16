@@ -7,7 +7,6 @@
 사용: python3 ir_monitor.py
 """
 import sys
-import time
 
 import config
 import ir_codec

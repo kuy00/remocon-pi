@@ -7,6 +7,7 @@ venv/
 
 # 런타임 산출물 (수집/학습 결과 — 환경마다 다름)
 dataset/
+dataset_*/
 model.json
 
 # 로컬 설정 / OS / IDE
