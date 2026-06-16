@@ -26,10 +26,11 @@ MODEL_OUT = Path("model.json")
 
 
 # ── 데이터셋 적재 (ir_collect.py 출력: params + repeats) ──────
-def load_dataset():
+def load_dataset(data_dir=None):
+    data_dir = Path(data_dir) if data_dir else DATA_DIR
     samples = []  # {"params": {...}, "frames": [[..],[..]], "confidence": x}
     low_conf = []
-    for f in sorted(glob.glob(str(DATA_DIR / "*.json"))):
+    for f in sorted(glob.glob(str(data_dir / "*.json"))):
         d = json.loads(Path(f).read_text(encoding="utf-8"))
         reps = d.get("repeats", [])
         if not reps:
@@ -147,10 +148,71 @@ def field_relation(samples, fi, bi, owner):
             "map": {"|".join(map(str, k)): v for k, v in sorted(m.items())}}
 
 
+# ── 6. 프레임 합 체크섬 쌍 (다바이트) ─────────────────────
+def categorical_params(samples, params):
+    """값이 비수치(문자열 등)인 파라미터 = 그룹 키 후보(mode/power 등). 하드코딩 아님."""
+    out = []
+    for p in params:
+        vals = {s["params"][p] for s in samples}
+        if any(not isinstance(v, (int, float)) for v in vals):
+            out.append(p)
+    return out
+
+
+def find_sum_pair(samples, candidates, all_pos, group_params):
+    """후보 바이트 두 개(c1,c2)가 '프레임 합 체크섬 쌍'인지 탐색.
+
+    같은 그룹(group_params 값 고정)에서 `프레임 전체 바이트 합`이 상수이면,
+    두 바이트가 함께 그 합을 고정하는 체크섬이다(수치 파라미터를 보정).
+    payload = c1,c2 를 뺀 나머지 전체. 그룹별 상수표(const_map)를 학습해 반환
+    — 하드코딩 없이 데이터에서 도출. 노이즈 오탐 방지로 고신뢰(>=0.9) 샘플만 사용.
+    """
+    use = [s for s in samples if s.get("confidence", 1.0) >= 0.9]
+    if len(use) < 3:
+        use = samples
+
+    def gkey(s):
+        return tuple(s["params"][p] for p in group_params)
+
+    def byte(s, pos):
+        return s["frames"][pos[0]][pos[1]]
+
+    for p1, p2 in combinations(candidates, 2):
+        members = {tuple(p1), tuple(p2)}
+        payload = [p for p in all_pos if tuple(p) not in members]
+        groups, ok = {}, True
+        for s in use:
+            tot = sum(byte(s, p) for p in payload) + byte(s, p1) + byte(s, p2)
+            k = gkey(s)
+            if k in groups and groups[k] != tot:
+                ok = False
+                break
+            groups[k] = tot
+        # 두 멤버 모두 샘플마다 변해야 의미 있는 체크섬 쌍이다
+        v1 = len({byte(s, p1) for s in use}) > 1
+        v2 = len({byte(s, p2) for s in use}) > 1
+        if ok and v1 and v2:
+            return {
+                "type": "frame_sum_pair",
+                "members": [list(p1), list(p2)],
+                "payload": [list(x) for x in payload],
+                "by": list(group_params),
+                "const_map": {"|".join(map(str, k)): v for k, v in sorted(groups.items())},
+            }
+    return None
+
+
 def main():
-    samples, low_conf = load_dataset()
+    import argparse
+    ap = argparse.ArgumentParser(description="수집 데이터에서 IR 프로토콜 규칙 자동 학습")
+    ap.add_argument("--dataset", default=str(DATA_DIR), help=f"수집 데이터 경로 (기본 {DATA_DIR})")
+    ap.add_argument("--out", default=str(MODEL_OUT), help=f"모델 출력 경로 (기본 {MODEL_OUT})")
+    args = ap.parse_args()
+    out_file = Path(args.out)
+
+    samples, low_conf = load_dataset(args.dataset)
     if not samples:
-        print(f"데이터 없음 ({DATA_DIR}/ 비어있음) — 먼저 ir_collect.py 로 수집")
+        print(f"데이터 없음 ({args.dataset}/ 비어있음) — 먼저 ir_collect.py 로 수집")
         return
     params = list(samples[0]["params"].keys())
     print(f"샘플 {len(samples)}개, 파라미터 {params}")
@@ -163,36 +225,77 @@ def main():
 
     shape, samples, report = discover_fields(samples, params)
     print(f"\n프레임 구성: {shape}")
-    print("\n[바이트 분류]")
-    model = {"params": params, "shape": list(shape), "frames": []}
-    for fi, L in enumerate(shape):
-        finfo = {"len": L, "bytes": []}
-        for (ffi, bi, kind, cval, owner) in [r for r in report if r[0] == fi]:
-            entry = {"index": bi, "kind": kind}
-            tag = ""
-            if kind == "const":
-                entry["value"] = cval
-                tag = f"const=0x{cval:02X}"
-            elif kind == "field":
-                rel = field_relation(samples, fi, bi, owner)
-                entry["relation"] = rel
-                tag = f"field<{'+'.join(owner)}> {rel['type']}"
-            else:
-                cs = find_checksum(samples, fi, bi)
-                if cs:
-                    entry["kind"] = "checksum"
-                    entry["checksum"] = cs
-                    where = " ".join(f"F{f+1}B{b}" for f, b in cs["range"])
-                    tag = (f"checksum {cs['scheme']}(+0x{cs['const']:02X}) "
-                           f"of [{where}] (n={cs['samples_used']})")
-                else:
-                    tag = "complex(미해독)"
-            finfo["bytes"].append(entry)
-            print(f"  F{fi+1} B{bi}: {tag}")
-        model["frames"].append(finfo)
 
-    MODEL_OUT.write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n모델 저장: {MODEL_OUT}")
+    # ── 1차 분류: const / field / 단일바이트 checksum / (나머지=complex) ──
+    model = {"params": params, "shape": list(shape), "frames": [{"len": L, "bytes": []} for L in shape]}
+    entry_at = {}        # (fi,bi) -> entry dict
+    for (fi, bi, kind, cval, owner) in report:
+        entry = {"index": bi, "kind": kind}
+        if kind == "const":
+            entry["value"] = cval
+        elif kind == "field":
+            entry["relation"] = field_relation(samples, fi, bi, owner)
+        else:
+            cs = find_checksum(samples, fi, bi)
+            if cs:
+                entry["kind"] = "checksum"
+                entry["checksum"] = cs
+        entry_at[(fi, bi)] = entry
+        model["frames"][fi]["bytes"].append(entry)
+
+    # ── 2차: 프레임 합 체크섬 쌍 탐색 ──
+    # 후보 = '그룹(범주형 파라미터 고정) 안에서도 변하는' 비구조적 바이트(complex 또는 lookup).
+    #   const/linear 는 payload(데이터), 범주형으로만 변하는 lookup(모드바이트 등)도 payload.
+    #   고신뢰 샘플 기준으로 그룹 내 변동을 판정해 노이즈 오탐을 막는다.
+    gparams = categorical_params(samples, params)
+    all_pos = [(fi, bi) for fi, L in enumerate(shape) for bi in range(L)]
+    hi = [s for s in samples if s.get("confidence", 1.0) >= 0.9] or samples
+
+    def varies_in_group(pos):
+        groups = {}
+        for s in hi:
+            k = tuple(s["params"][p] for p in gparams)
+            groups.setdefault(k, set()).add(s["frames"][pos[0]][pos[1]])
+        return any(len(v) > 1 for v in groups.values())
+
+    candidates = []
+    for pos, e in entry_at.items():
+        is_lookup = e["kind"] == "field" and e["relation"]["type"] == "lookup"
+        if (e["kind"] == "complex" or is_lookup) and varies_in_group(pos):
+            candidates.append(pos)
+    if len(candidates) >= 2:
+        pair = find_sum_pair(samples, candidates, all_pos, gparams)
+        if pair:
+            for pos in (tuple(pair["members"][0]), tuple(pair["members"][1])):
+                e = entry_at[pos]
+                e.pop("relation", None)
+                e["kind"] = "checksum"
+                e["checksum"] = pair
+
+    # ── 출력 ──
+    print("\n[바이트 분류]")
+    for fi, finfo in enumerate(model["frames"]):
+        for entry in finfo["bytes"]:
+            bi, kind = entry["index"], entry["kind"]
+            if kind == "const":
+                tag = f"const=0x{entry['value']:02X}"
+            elif kind == "field":
+                rel = entry["relation"]
+                tag = f"field<{'+'.join(rel['by'])}> {rel['type']}"
+            elif kind == "checksum":
+                cs = entry["checksum"]
+                if cs.get("type") == "frame_sum_pair":
+                    by = "+".join(cs["by"]) or "전역"
+                    tag = f"checksum frame_sum_pair (그룹별 by<{by}>, {len(cs['const_map'])}그룹)"
+                else:
+                    where = " ".join(f"F{f+1}B{b}" for f, b in cs["range"])
+                    tag = f"checksum {cs['scheme']}(+0x{cs['const']:02X}) of [{where}]"
+            else:
+                tag = "complex(미해독)"
+            print(f"  F{fi+1} B{bi}: {tag}")
+
+    out_file.write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n모델 저장: {out_file}")
 
     # 자가검증: 미해독(complex) 바이트가 남았는지
     complex_cnt = sum(1 for f in model["frames"] for b in f["bytes"] if b["kind"] == "complex")
