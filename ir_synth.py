@@ -44,12 +44,20 @@ def find_templates(dataset_dir, mode, power):
     return out
 
 
-def load_segs(fpath):
+def load_clean(fpath):
+    """수집본을 다수결(consensus)로 정제해 (깨끗한 segs, 합의 바이트프레임, 신뢰도) 반환.
+
+    - 합의 바이트프레임 = 반복본 다수결(노이즈 제거된 '정답' 바이트)
+    - 깨끗한 segs = 그 합의와 정확히 일치하게 디코딩되는 반복본(타이밍 템플릿용).
+      없으면 None.
+    """
     d = json.loads(Path(fpath).read_text(encoding="utf-8"))
     reps = d.get("repeats") or []
     if not reps:
-        raise ValueError(f"{fpath}: repeats 없음")
-    return reps[0]
+        return None, [], 0.0
+    frames, conf = ir_codec.consensus(reps)
+    clean = next((r for r in reps if ir_codec.segs_to_byteframes(r) == frames), None)
+    return clean, frames, conf
 
 
 def space_clusters(segs, thr):
@@ -105,15 +113,14 @@ def synth_segs(template_segs, target_frames):
     return segs
 
 
-def build_target(template_segs, dT):
-    """템플릿 바이트에서 온도차 dT 만큼 B3 +dT, B4 -dT (체크섬 보존)."""
-    frames = ir_codec.segs_to_byteframes(template_segs)
+def build_target(frames, dT):
+    """합의 바이트(frames)에서 온도차 dT 만큼 B3 +dT, B4 -dT (체크섬 보존)."""
     if len(frames) < 2 or len(frames[0]) <= TEMP_BYTE[1] or len(frames[1]) <= CK_LOW[1]:
         raise SystemExit(f"템플릿 프레임 구조가 예상과 다름: {[len(f) for f in frames]}")
-    frames = [list(f) for f in frames]
-    frames[TEMP_BYTE[0]][TEMP_BYTE[1]] = (frames[TEMP_BYTE[0]][TEMP_BYTE[1]] + dT) & 0xFF
-    frames[CK_LOW[0]][CK_LOW[1]] = (frames[CK_LOW[0]][CK_LOW[1]] - dT) & 0xFF
-    return frames
+    out = [list(f) for f in frames]
+    out[TEMP_BYTE[0]][TEMP_BYTE[1]] = (out[TEMP_BYTE[0]][TEMP_BYTE[1]] + dT) & 0xFF
+    out[CK_LOW[0]][CK_LOW[1]] = (out[CK_LOW[0]][CK_LOW[1]] - dT) & 0xFF
+    return out
 
 
 def _hex(frames):
@@ -137,23 +144,34 @@ def main():
         raise SystemExit(f"템플릿 없음: {args.dataset}/{args.mode}_*_{args.power}.json")
 
     if args.template_temp is not None:
-        cand = [tf for tf in templates if tf[0] == args.template_temp]
-        if not cand:
+        templates = [tf for tf in templates if tf[0] == args.template_temp]
+        if not templates:
             raise SystemExit(f"템플릿 온도 {args.template_temp} 수집본 없음")
-        tpl_temp, tpl_path = cand[0]
-    else:
-        tpl_temp, tpl_path = min(templates, key=lambda tf: abs(tf[0] - args.temp))
+
+    # 후보를 consensus 로 정제: 깨끗한 segs 가 있는 것만, 고신뢰(>=0.9) 우선, 가까운 온도 순
+    cands = []
+    for temp, path in templates:
+        clean, frames, conf = load_clean(path)
+        if clean is None or len(frames) < 2:
+            continue
+        cands.append((temp, path, clean, frames, conf))
+    if not cands:
+        raise SystemExit("쓸 만한 템플릿 없음 (반복본이 합의와 일치하지 않음 — 재수집 필요)")
+
+    good = [c for c in cands if c[4] >= 0.9]
+    pool = good if good else cands
+    tpl_temp, tpl_path, template_segs, tpl_frames, tpl_conf = \
+        min(pool, key=lambda c: (abs(c[0] - args.temp), -c[4]))
 
     dT = args.temp - tpl_temp
-    template_segs = load_segs(tpl_path)
-    tpl_frames = ir_codec.segs_to_byteframes(template_segs)
-    target_frames = build_target(template_segs, dT)
+    target_frames = build_target(tpl_frames, dT)
 
     print(f"합성: {args.mode} {args.temp} {args.power}")
-    print(f"  템플릿: {Path(tpl_path).name} (온도 {tpl_temp}, dT={dT:+d})")
+    print(f"  템플릿: {Path(tpl_path).name} (온도 {tpl_temp}, 신뢰도 {tpl_conf:.0%}, dT={dT:+d})")
     print(f"  템플릿 바이트: {_hex(tpl_frames)}")
     print(f"  합성   바이트: {_hex(target_frames)}")
-
+    if not good:
+        print("  ⚠ 고신뢰(>=90%) 템플릿이 없어 노이즈 가능 — 해당 그룹 재수집 권장")
     if dT == 0:
         print("  (dT=0 — 템플릿과 동일, replay 와 같음)")
 
