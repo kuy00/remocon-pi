@@ -79,27 +79,42 @@ def discover_fields(samples, params):
 
 
 # ── 4. 체크섬 자동 탐색 ───────────────────────────────────
-def find_checksum(samples, fi, bi, L):
-    """frame fi의 byte bi가 같은 프레임 다른 바이트들의 체크섬인지 탐색."""
-    others = [b for b in range(L) if b != bi]
+def find_checksum(samples, target_fi, target_bi):
+    """target 바이트가 (프레임 교차 포함) 다른 바이트들의 체크섬인지 탐색.
+
+    전체 프레임 바이트를 프레임 순서로 평탄화해 연속 구간을 payload 후보로 시도한다.
+    상수 보정항(const)은 첫 샘플에서 offset을 구해 전 샘플로 검증한다(자동 추정).
+    노이즈 오탐을 줄이려 고신뢰(>=0.9) 샘플이 충분하면 그것만으로 탐색한다.
+    range 는 [frame, byte] 쌍의 리스트 — 같은 프레임 내/교차 모두 표현한다.
+    """
+    hi = [s for s in samples if s.get("confidence", 1.0) >= 0.9]
+    use = hi if len(hi) >= 3 else samples
+    # 타깃을 제외한 전체 바이트 위치를 프레임 순서로 평탄화
+    positions = [(fi, bi)
+                 for fi, f in enumerate(use[0]["frames"])
+                 for bi in range(len(f))
+                 if not (fi == target_fi and bi == target_bi)]
     schemes = {
         "sum":      lambda xs: sum(xs) & 0xFF,
-        "xor":      lambda xs: _xor(xs),
+        "xor":      _xor,
         "sum_neg":  lambda xs: (-sum(xs)) & 0xFF,
         "sum_inv":  lambda xs: (~sum(xs)) & 0xFF,
     }
-    # 연속 구간 [a:b] payload 후보로 시도
-    for a in range(0, len(others)):
-        for b in range(a + 1, len(others) + 1):
-            rng = others[a:b]
+    def tgt(s):
+        return s["frames"][target_fi][target_bi]
+    def payload(s, rng):
+        return [s["frames"][fi][bi] for fi, bi in rng]
+    # 연속 구간 [a:b] payload 후보 × 스킴 × 자동 보정상수
+    for a in range(0, len(positions)):
+        for b in range(a + 1, len(positions) + 1):
+            rng = positions[a:b]
             for name, fn in schemes.items():
-                for const in range(0, 256, 1) if False else [0]:  # 상수항은 우선 0
-                    ok = all(
-                        (fn([s["frames"][fi][r] for r in rng]) + const) & 0xFF
-                        == s["frames"][fi][bi]
-                        for s in samples)
-                    if ok:
-                        return {"scheme": name, "range": rng, "const": const}
+                off = (tgt(use[0]) - fn(payload(use[0], rng))) & 0xFF
+                ok = all((fn(payload(s, rng)) + off) & 0xFF == tgt(s) for s in use)
+                if ok:
+                    return {"scheme": name,
+                            "range": [[fi, bi] for fi, bi in rng],
+                            "const": off, "samples_used": len(use)}
     return None
 
 
@@ -163,11 +178,13 @@ def main():
                 entry["relation"] = rel
                 tag = f"field<{'+'.join(owner)}> {rel['type']}"
             else:
-                cs = find_checksum(samples, fi, bi, L)
+                cs = find_checksum(samples, fi, bi)
                 if cs:
                     entry["kind"] = "checksum"
                     entry["checksum"] = cs
-                    tag = f"checksum {cs['scheme']} of {cs['range']}"
+                    where = " ".join(f"F{f+1}B{b}" for f, b in cs["range"])
+                    tag = (f"checksum {cs['scheme']}(+0x{cs['const']:02X}) "
+                           f"of [{where}] (n={cs['samples_used']})")
                 else:
                     tag = "complex(미해독)"
             finfo["bytes"].append(entry)
