@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""F2 B4/B5 규칙 진단 — dataset/ 고신뢰 샘플로 값 패턴/가설 검정.
+"""F2 B4/B5 규칙 진단 — 데이터셋 고신뢰 샘플로 값 패턴/가설 검정.
 
 학습기가 complex 로 남긴 F2 끝 두 바이트가 어떤 규칙인지 찾기 위한 일회성 도구.
-사용: python3 diag_b45.py
+사용: python3 diag_b45.py [데이터셋_디렉터리]   (기본 dataset)
 """
+import sys
 import glob
 import json
 from collections import defaultdict
 
 import ir_codec
 
+DATA_DIR = sys.argv[1] if len(sys.argv) > 1 else 'dataset'
+
 rows = []
-for f in sorted(glob.glob('dataset/*.json')):
+for f in sorted(glob.glob(f'{DATA_DIR}/*.json')):
     d = json.load(open(f, encoding='utf-8'))
     fr, conf = ir_codec.consensus(d['repeats'])
     if len(fr) < 2 or conf < 0.9:
