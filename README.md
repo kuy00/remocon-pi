@@ -54,7 +54,7 @@ IR_TX_GPIO=17 python3 ir_send.py 난방 30 off
 |------|------|
 | `ir_collect.py` | 수집 — `sweep.json` 스윕 × 8회 반복 × 신뢰도 게이트 → `dataset/` 저장 |
 | `ir_learn.py` | 학습 — `dataset/` 자동 분석(필드 발견·체크섬 탐색) → `model.json` |
-| `ir_synth.py` | 합성 — 가장 가까운 수집본 템플릿 + 학습 규칙으로 미수집 온도 신호 생성·송신 |
+| `ir_synth.py` | 합성 — `model.json` 규칙 + 가장 가까운 수집본 템플릿으로 미수집 조합 신호 생성·송신 (위치 하드코딩 없음) |
 | `ir_send.py` | 송신 — 저장 펄스 재생(replay) + 합성 송신 |
 | `ir_codec.py` | 공통 — raw 펄스 ↔ 비트/바이트, 신뢰도 계산 |
 | `ir_monitor.py` | 모니터 — 실시간 디코딩 + 대조 검증 |

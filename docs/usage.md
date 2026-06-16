@@ -59,21 +59,26 @@ python3 ir_send.py 냉방 21 on --gpio 17 # 송신 핀 변경
 
 ## 5. 합성 송신 — `ir_synth.py`
 
-수집하지 **않은** 온도 조합을 학습 규칙으로 합성해 송신한다. 같은 `(mode, power)`
-그룹에서 **가장 가까운 수집본**을 템플릿으로 삼아, 헤더/타이밍은 실측 그대로 두고
-값이 바뀌는 비트의 space 길이만 교체한다(서지컬 합성).
+수집하지 **않은** 조합을 **`model.json`(ir_learn 산출) 규칙만으로** 합성해 송신한다.
+바이트 위치·온도식·체크섬을 코드에 박지 않고 모델에서 읽으므로 **어떤 리모컨이든** 동작한다.
+같은 범주형 그룹의 **가장 가까운 수집본**을 타이밍 템플릿으로 삼아, 헤더/타이밍은 실측
+그대로 두고 값이 바뀌는 비트의 space 길이만 교체한다(서지컬 합성).
+
+> 선행: `python3 ir_learn.py [--dataset ...]` 로 `model.json` 을 먼저 만든다.
 
 ```bash
-python3 ir_synth.py 냉방 25 on              # 합성 후 송신
-python3 ir_synth.py 냉방 25 on --dry        # 송신 없이 합성 바이트 + 자가검증만
-python3 ir_synth.py 냉방 25 on --template-temp 24   # 템플릿 온도 지정
+python3 ir_synth.py 냉방 25 on                       # model.json 규칙으로 합성 후 송신
+python3 ir_synth.py 냉방 25 on --dry                 # 송신 없이 합성 바이트 + 자가검증
+python3 ir_synth.py 냉방 25 on --template 냉방_24_on  # 템플릿 라벨 지정
+python3 ir_synth.py 냉방 25 on --dataset dataset_cool --model model.json
 ```
 
-- 온도 바이트(F1 B3)는 온도에 선형(기울기 1) → `B3 += dT`
-- F2 B4·B5 는 프레임 전체 합이 그룹 상수인 2바이트 체크섬 → `B4 -= dT`로 합 보존(B5 유지)
+- 파라미터는 모델의 `params` 순서대로 입력(예: `mode temp power`). 숫자는 자동 인식.
+- 모델 규칙별 처리: `const`→고정, `field linear`→계산(외삽), `field lookup`→표/없으면 템플릿,
+  `checksum frame_sum_pair`→그룹 합 상수를 만족하도록 멤버 보정, `complex`→템플릿값(그 바이트는 replay)
 - `--dry`는 합성 결과를 다시 디코딩해 목표 바이트와 일치하는지 자가검증(송신 없음, 하드웨어 불필요)
-- **주의**: 합성 분할(B4/B5)이 실측과 다를 수 있다. 에어컨이 전체합만 검증하면 그대로 동작하고,
-  B4·B5를 개별 검증하면 인접 온도 템플릿일수록 안전하다. 처음엔 `--dry`로 확인 후 실제 송신 권장.
+- **주의**: 체크섬 분할이 실측과 다를 수 있다(전체 합은 보존). 에어컨이 전체합만 검증하면 그대로
+  동작하고, 멤버를 개별 검증하면 인접 템플릿일수록 안전하다. 처음엔 `--dry`로 확인 후 송신 권장.
 
 ## 데이터 형식 한눈에
 
