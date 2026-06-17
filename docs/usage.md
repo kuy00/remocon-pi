@@ -10,15 +10,19 @@
 
 ```bash
 # 먼저 sweep.json 을 리모컨에 맞게 편집 (axes: mode/temp/power ...)
-python3 ir_collect.py                     # 전체 스윕 수집
+python3 ir_collect.py                     # 전체 스윕 수집 (마지막 축 교차)
 python3 ir_collect.py --sweep my.json --out dataset
+python3 ir_collect.py --no-interleave     # 교차 끄기 — 설정당 연속 8회(구방식)
 ```
 
 - 헤더 타이밍 하드코딩 없음 — 긴 무신호 갭으로만 전송 1회를 구분
 - 설정당 8회 반복 후 **반복 일치율(신뢰도)** 계산, 기준(기본 **90%**) 미달이면 **통과할 때까지 재촬영**
-  (미달 화면에서 `Enter`=재촬영, `s`=현재본 저장하고 진행)
-- 수집 순서는 `sweep.json`의 `order`를 따른다 — 기본 `[mode, temp, power]`라 같은 온도의 **on→off가 교차**로 찍힌다
-- 저장: `dataset/{라벨}.json` — `params` + `repeats`(raw 펄스 N회) + `confidence`
+- **교차 수집(기본)** — `sweep.json` `order`의 **마지막 축**(기본 `[mode, temp, power]`의 `power`)을
+  같은 그룹(예: `냉방_21_on` / `냉방_21_off`) 안에서 **라운드마다 번갈아** 캡처한다
+  (`on→off→on→off…×8`). 전원이 토글식인 리모컨은 on을 다시 찍으려면 어차피 off를 거쳐야 하므로
+  이 순서가 자연스럽다. 8라운드 후 멤버별 신뢰도 검사, **미달 멤버만** 교차로 재촬영
+  (미달 화면에서 `Enter`=재촬영, `s`=현재본 저장하고 진행). `--no-interleave`면 설정당 연속 8회(구방식).
+- 저장: `dataset/{라벨}.json` — `params` + `repeats`(raw 펄스 N회) + `confidence` (교차 여부와 무관하게 라벨당 1파일)
 - 반복 횟수/기준은 `config.REPEATS`/`config.MIN_AGREE`(환경변수 `IR_REPEATS`, `IR_MIN_AGREE`)로 조정
 
 ## 2. 학습 — `ir_learn.py`

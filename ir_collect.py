@@ -5,9 +5,13 @@
 - 설정 하나당 N회(기본 8) 반복 캡처 후, 반복 일치율(신뢰도)을 계산한다.
 - 신뢰도가 기준 미만이면 그 설정을 자동으로 다시 촬영한다.
 - 모든 반복본의 raw segs를 저장 → 학습기가 다수결/비트신뢰도 계산.
+- 교차 수집(기본): `order`의 마지막 축(예: power on/off)을 한 라운드에 한 번씩
+  번갈아 캡처(on→off→on→off…×N). 전원 토글식 리모컨은 어차피 on/off를 오가야
+  하므로 이 순서가 자연스럽다. `--no-interleave`로 설정당 연속 N회 방식으로 끌 수 있다.
 
-사용: python3 ir_collect.py            # sweep.json 전체 수집
+사용: python3 ir_collect.py            # sweep.json 전체 수집 (마지막 축 교차)
       python3 ir_collect.py --sweep my.json --out dataset
+      python3 ir_collect.py --no-interleave   # 설정당 연속 N회 (구방식)
 """
 import sys
 import json
@@ -39,39 +43,75 @@ def label(params, order):
     return "_".join(str(params[k]) for k in order)
 
 
-def capture_setting(rx, params, order):
-    """한 설정을 N회 반복 캡처. 신뢰도 기준 미달이면 통과할 때까지 계속 재촬영.
+def group_combos(combos, order, interleave=True):
+    """교차 수집 단위로 combos를 묶는다.
 
-    기준 미달 시 Enter 로 재촬영, 's' 입력 시 현재본을 저장하고 진행(수동 예외).
+    interleave=True: `order`의 마지막 축(예: power)만 교차 그룹으로 묶는다.
+      마지막 축을 제외한 값이 같은 combo끼리 한 그룹(예: 냉방_21_on / 냉방_21_off).
+    interleave=False 또는 축이 1개뿐이면: 설정마다 1개짜리 그룹(구방식).
+    product() 순서상 같은 그룹은 연속하므로 입력 순서가 보존된다.
     """
-    name = label(params, order)
-    attempt = 0
-    last = None
+    if not interleave or len(order) < 2:
+        return [[c] for c in combos]
+    key_axes = order[:-1]
+    groups, index = [], {}
+    for c in combos:
+        key = tuple(c[k] for k in key_axes)
+        if key not in index:
+            index[key] = len(groups)
+            groups.append([])
+        groups[index[key]].append(c)
+    return groups
+
+
+def capture_group(rx, members, order):
+    """한 교차 그룹(예: on/off)을 라운드 단위로 번갈아 N회씩 캡처.
+
+    각 라운드마다 멤버를 한 번씩(on→off→…) 캡처한다. N라운드 후 멤버별로
+    신뢰도를 계산하고, 기준 미달 멤버만 다시 교차로 재촬영한다.
+    재촬영 화면에서 Enter=재촬영, 's'=현재본 저장하고 진행(수동 예외).
+    반환: [(params, repeats, conf), ...] (members 순서 유지).
+    """
+    names = [label(m, order) for m in members]
+    collected = {n: [] for n in names}
+    title = " / ".join(names)
+
+    def run_rounds(targets, note=""):
+        # targets: [(name, params)] — 라운드마다 이 순서대로 한 번씩 캡처
+        input(f"\n>>> [{title}] 교차 수집{note} — 안내대로 버튼을 누르세요. 준비되면 Enter: ")
+        for r in range(1, N_REPEATS + 1):
+            for name, _ in targets:
+                done = len(collected[name]) + 1
+                print(f"    라운드 {r}/{N_REPEATS} — [{name}] 버튼을 누르세요 ({done}/{N_REPEATS})...")
+                rx.clear()
+                segs = rx.wait_one()
+                collected[name].append(segs)
+                print(f"      수집 (segs={len(segs)})")
+                time.sleep(0.3)
+
+    run_rounds(list(zip(names, members)))
     while True:
-        attempt += 1
-        if last is None:
-            prompt = f"\n>>> [{name}] 설정으로 리모컨을 맞춘 뒤 Enter (시도 {attempt}): "
-        else:
-            prompt = (f"\n>>> [{name}] 기준({MIN_AGREE:.0%}) 미달 — "
-                      f"Enter=재촬영, s=현재본 저장하고 진행: ")
-        if input(prompt).strip().lower() == "s" and last is not None:
-            print(f"    수동 진행 — 신뢰도 {last[1]:.0%} 저장")
-            return last
-        rx.clear()
-        repeats = []
-        while len(repeats) < N_REPEATS:
-            print(f"    [{len(repeats)+1}/{N_REPEATS}] 버튼을 누르세요...")
-            segs = rx.wait_one()
-            repeats.append(segs)
-            print(f"      수집 (segs={len(segs)})")
-            time.sleep(0.3)
-            rx.clear()
-        _, conf = ir_codec.consensus(repeats)
-        last = (repeats, conf)
-        if conf >= MIN_AGREE:
-            print(f"    신뢰도 {conf:.0%} → 통과 ✅")
-            return repeats, conf
-        print(f"    신뢰도 {conf:.0%} → 기준({MIN_AGREE:.0%}) 미달, 재촬영 ⚠️")
+        failing = []
+        for m, name in zip(members, names):
+            _, conf = ir_codec.consensus(collected[name])
+            mark = "✅" if conf >= MIN_AGREE else "⚠️"
+            print(f"    {name}: 신뢰도 {conf:.0%} {mark}")
+            if conf < MIN_AGREE:
+                failing.append((name, m))
+        if not failing:
+            break
+        fail_names = ", ".join(n for n, _ in failing)
+        ans = input(f"\n>>> [{fail_names}] 기준({MIN_AGREE:.0%}) 미달 — "
+                    f"Enter=재촬영, s=현재본 저장하고 진행: ").strip().lower()
+        if ans == "s":
+            print("    수동 진행 — 현재본 저장")
+            break
+        for name, _ in failing:
+            collected[name] = []
+        run_rounds(failing, note=" 재촬영")
+
+    return [(m, collected[n], ir_codec.consensus(collected[n])[1])
+            for m, n in zip(members, names)]
 
 
 def save(out_dir, params, order, repeats, conf):
@@ -93,27 +133,36 @@ def main():
     ap.add_argument("--sweep", default="sweep.json")
     ap.add_argument("--out", default="dataset")
     ap.add_argument("--gpio", type=int, default=config.IR_RX_GPIO)
+    ap.add_argument("--no-interleave", action="store_true",
+                    help="교차 수집 끄기 — 설정당 연속 N회 (구방식)")
     args = ap.parse_args()
 
     order, combos = load_sweep(args.sweep)
+    groups = group_combos(combos, order, interleave=not args.no_interleave)
     out_dir = Path(args.out)
+    cross = order[-1] if len(order) >= 2 and not args.no_interleave else None
     print("=" * 60)
     print("  범용 IR 수집기")
     print(f"  축: {order}")
     print(f"  총 {len(combos)}개 설정 × {N_REPEATS}회 반복")
+    if cross:
+        print(f"  교차 축: '{cross}' (그룹당 멤버 번갈아 수집) — 그룹 {len(groups)}개")
     print(f"  신뢰도 기준 {MIN_AGREE:.0%} (미달 시 자동 재촬영)")
     print("=" * 60)
 
     pi = config.connect()
     rx = GapFramedCollector(pi, args.gpio)
     rx.start()
+    done = 0
     try:
-        for idx, params in enumerate(combos, 1):
-            print(f"\n[{idx}/{len(combos)}] {label(params, order)}")
-            repeats, conf = capture_setting(rx, params, order)
-            fpath = save(out_dir, params, order, repeats, conf)
-            print(f"    저장: {fpath} (신뢰도 {conf:.0%})")
-        print(f"\n완료 — {out_dir}/ 에 {len(combos)}개 설정 저장")
+        for gi, members in enumerate(groups, 1):
+            gtitle = " / ".join(label(m, order) for m in members)
+            print(f"\n[그룹 {gi}/{len(groups)}] {gtitle}")
+            for params, repeats, conf in capture_group(rx, members, order):
+                fpath = save(out_dir, params, order, repeats, conf)
+                done += 1
+                print(f"    저장: {fpath} (신뢰도 {conf:.0%})")
+        print(f"\n완료 — {out_dir}/ 에 {done}개 설정 저장")
     except KeyboardInterrupt:
         print("\n중단됨.")
     finally:
