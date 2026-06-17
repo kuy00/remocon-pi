@@ -27,6 +27,7 @@ ir_collect → ir_learn → (ir_synth) → ir_send
 | 2. 학습 | `ir_learn.py` | `dataset/` 자동 분석: 필드 발견(선형/룩업)·체크섬 탐색 → `model.json` |
 | 3. 합성 | `ir_synth.py` | 가장 가까운 수집본을 템플릿으로 미수집 온도의 바이트→펄스 생성, 자가검증·저장 |
 | 4. 송신 | `ir_send.py` | 저장 펄스 재생(replay) + 합성 송신 |
+| 외부 | `ir_server.py` | LAN HTTP API — 봇/앱이 `ir_send`를 호출(POST /send) (stdlib, 의존성 0) |
 | 보조 | `ir_monitor.py` | 실시간 디코딩/대조 검증 |
 | 공통 | `ir_codec.py` | raw 펄스 ↔ 비트/바이트, 다수결·신뢰도 (순수 로직) |
 | 공통 | `ir_io.py` | pigpio 저수준 I/O — 수신 collector + 송신 캐리어/파형 |

@@ -45,6 +45,9 @@ sudo systemctl enable pigpiod            # 부팅 시 자동 실행(선택)
 | `IR_MODEL_FILE` | `model.json` | 학습 모델 경로 (`ir_learn.py` 출력) |
 | `IR_REPEATS` | `8` | 설정당 반복 수집 횟수 |
 | `IR_MIN_AGREE` | `0.9` | 수집 신뢰도 하한(미달 시 **통과할 때까지** 재촬영) |
+| `IR_HTTP_HOST` | `0.0.0.0` | `ir_server.py` listen 주소 (LAN 전체=`0.0.0.0`) |
+| `IR_HTTP_PORT` | `8000` | `ir_server.py` listen 포트 |
+| `IR_HTTP_TOKEN` | `` (빈값) | 설정 시 `Authorization: Bearer <token>` 요구. 빈값=무인증 |
 
 `config.connect()`가 `PIGPIO_HOST:PIGPIO_PORT`로 데몬에 연결한다.
 

@@ -56,6 +56,42 @@ def synth_fallback(label, values):
     return res["segs"], info
 
 
+def resolve_segs(label, parts=None):
+    """라벨로 전송할 raw segs 와 출처 설명을 구한다(하드웨어 불필요).
+
+    수집본이 있으면 replay, 없으면 model.json 으로 합성한다. CLI·HTTP 서버 공용.
+    """
+    try:
+        segs, meta = load_segs(label)
+        conf = meta.get("confidence")
+        if meta.get("synthetic"):
+            source = f"synthetic replay (템플릿 {meta.get('template', '?')})"
+        else:
+            source = f"replay, 신뢰도 {conf:.0%}" if isinstance(conf, (int, float)) else "replay"
+    except FileNotFoundError:
+        segs, source = synth_fallback(label, parts)
+    return segs, source
+
+
+def send(label, parts=None, gpio=None):
+    """라벨을 해석해 IR 신호를 전송한다. {label, source, segs} 반환 (CLI·서버 공용).
+
+    pigpiod 미연결/모델 없음 등은 SystemExit, 수집본·라벨 문제는 호출부에서 처리.
+    """
+    gpio = config.IR_TX_GPIO if gpio is None else gpio
+    segs, source = resolve_segs(label, parts)
+    pi = config.connect()
+    try:
+        pi.set_mode(gpio, pigpio.OUTPUT)
+        pi.write(gpio, 0)
+        pi.wave_clear()
+        transmit_segs(pi, gpio, segs)
+    finally:
+        pi.write(gpio, 0)
+        pi.stop()
+    return {"label": label, "source": source, "segs": len(segs)}
+
+
 def list_available():
     print(f"=== {DATASET_DIR}/ 수집된 설정 ===")
     if not DATASET_DIR.exists():
@@ -97,27 +133,9 @@ def main():
         sys.exit(1)
 
     # 수집본 있으면 재생, 없으면 model.json 으로 합성
-    try:
-        segs, meta = load_segs(label)
-        conf = meta.get("confidence")
-        if meta.get("synthetic"):
-            source = f"synthetic replay (템플릿 {meta.get('template', '?')})"
-        else:
-            source = f"replay, 신뢰도 {conf:.0%}" if isinstance(conf, (int, float)) else "replay"
-    except FileNotFoundError:
-        segs, source = synth_fallback(label, args.parts)
-
-    pi = config.connect()
-    try:
-        pi.set_mode(gpio, pigpio.OUTPUT)
-        pi.write(gpio, 0)
-        pi.wave_clear()
-        print(f"송신: {label}  (GPIO {gpio}, {CARRIER_HZ}Hz, segs={len(segs)}) — {source}")
-        transmit_segs(pi, gpio, segs)
-        print("완료.")
-    finally:
-        pi.write(gpio, 0)
-        pi.stop()
+    res = send(label, args.parts, gpio)
+    print(f"송신: {res['label']}  (GPIO {gpio}, {CARRIER_HZ}Hz, segs={res['segs']}) — {res['source']}")
+    print("완료.")
 
 
 if __name__ == "__main__":

@@ -102,6 +102,35 @@ python3 ir_synth.py 냉방 25 on --dataset dataset_cool --model model.json
 - **주의**: 체크섬 분할이 실측과 다를 수 있다(전체 합은 보존). 에어컨이 전체합만 검증하면 그대로
   동작하고, 멤버를 개별 검증하면 인접 템플릿일수록 안전하다. 처음엔 `--dry`로 확인 후 송신 권장.
 
+## 6. HTTP API — `ir_server.py`
+
+`ir_send`를 LAN HTTP API로 노출해 봇/앱이 에어컨을 제어하게 한다. 표준 라이브러리만 쓰며(의존성 0),
+전송은 IR LED 단일 자원이라 락으로 직렬화한다. listen 주소·포트·토큰은 `config`(환경변수)로 설정.
+
+```bash
+python3 ir_server.py                    # config.HTTP_HOST:HTTP_PORT (기본 0.0.0.0:8000)
+IR_HTTP_TOKEN=s3cret python3 ir_server.py   # Bearer 토큰 인증 켜기(권장)
+```
+
+| 메서드·경로 | 본문 | 응답 |
+|------|------|------|
+| `GET /health` | — | `{"ok": true}` |
+| `GET /list` | — | `{"configs": [{"label","confidence","synthetic"}, ...]}` |
+| `POST /send` | `{"mode","temp","power"}` 또는 `{"label":"냉방_25_on"}` | `{"ok": true, "label", "source", "segs"}` |
+
+```bash
+# 파라미터로 (model.json 의 params 순서로 라벨 조립) / 또는 라벨 직접
+curl -X POST http://<pi-ip>:8000/send -H 'Content-Type: application/json' \
+     -d '{"mode":"냉방","temp":25,"power":"on"}'
+curl -X POST http://<pi-ip>:8000/send -d '{"label":"냉방_25_on"}'
+# 토큰 인증을 켰다면
+curl -X POST http://<pi-ip>:8000/send -H 'Authorization: Bearer s3cret' -d '{"label":"냉방_25_on"}'
+```
+
+- `ir_send`와 동일하게 **수집본 있으면 replay, 없으면 합성** 송신한다(`source`에 명시).
+- 오류 응답: 본문 오류 `400`, 라벨/수집본 없음 `404`, pigpiod 미연결·모델 없음·합성 불가 `503`, 토큰 불일치 `401`.
+- 인증은 `IR_HTTP_TOKEN`이 비어 있으면 무인증(LAN 전용 가정). 외부 노출 없이 **LAN 안에서만** 쓰는 것을 전제로 한다.
+
 ## 데이터 형식 한눈에
 
 ```jsonc
