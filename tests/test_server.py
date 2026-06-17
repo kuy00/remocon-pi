@@ -62,11 +62,24 @@ def test_send_by_fields_uses_model_order(server, monkeypatch):
     assert status == 200 and sent["label"] == "냉방_25_on"
 
 
-def test_send_missing_field_400(server, monkeypatch):
+def test_send_off_without_temp_matches_collected(server, monkeypatch):
+    """끌 때 temp 생략 → 같은 off 수집본을 매칭(온도 무관)."""
+    base, sent = server
+    monkeypatch.setattr(ir_server, "_model_params", lambda: ["mode", "temp", "power"])
+    monkeypatch.setattr(ir_server, "_dataset_params", lambda: [
+        ("냉방_18_off", {"mode": "냉방", "temp": 18, "power": "off"}),
+        ("냉방_25_on", {"mode": "냉방", "temp": 25, "power": "on"}),
+    ])
+    status, obj = _req(f"{base}/send", "POST", {"mode": "냉방", "power": "off"})
+    assert status == 200 and sent["label"] == "냉방_18_off"
+
+
+def test_partial_no_match_400(server, monkeypatch):
     base, _ = server
     monkeypatch.setattr(ir_server, "_model_params", lambda: ["mode", "temp", "power"])
+    monkeypatch.setattr(ir_server, "_dataset_params", lambda: [])
     status, obj = _req(f"{base}/send", "POST", {"mode": "냉방"})
-    assert status == 400 and "누락" in obj["error"]
+    assert status == 400 and "맞는 수집본이 없습니다" in obj["error"]
 
 
 def test_unknown_path_404(server):

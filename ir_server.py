@@ -48,8 +48,27 @@ def _model_params():
         return None
 
 
+def _dataset_params():
+    """dataset/*.json 의 (stem, params dict) 목록 — 부분 지정 매칭용."""
+    out = []
+    if config.DATASET_DIR.exists():
+        for f in sorted(config.DATASET_DIR.glob("*.json")):
+            try:
+                p = json.loads(f.read_text(encoding="utf-8")).get("params")
+            except Exception:
+                continue
+            if isinstance(p, dict):
+                out.append((f.stem, p))
+    return out
+
+
 def resolve_label(body):
-    """요청 본문 → (label, parts). {"label"} 우선, 아니면 model.json 파라미터 순서로 조립."""
+    """요청 본문 → (label, parts).
+
+    우선순위: {"label"} 직접 지정 > 전체 파라미터 지정 > **부분 지정**.
+    부분 지정은 주어진 값과 일치하는 수집본 아무거나 매칭한다 — 예: 끌 때 `temp` 를 생략하면
+    같은 off 수집본이 잡혀 그대로 꺼진다(온도가 무관한 축일 때만 안전. 봇 책임).
+    """
     if not isinstance(body, dict):
         raise ValueError("JSON 객체 본문이 필요합니다")
     if body.get("label"):
@@ -58,11 +77,17 @@ def resolve_label(body):
     params = _model_params()
     if not params:
         raise ValueError('model.json 이 없습니다 — "label" 을 직접 지정하세요')
-    missing = [p for p in params if p not in body]
-    if missing:
-        raise ValueError(f"파라미터 누락: {missing} (필요: {params})")
-    parts = [str(body[p]) for p in params]
-    return "_".join(parts), parts
+    given = {p: str(body[p]) for p in params if p in body}
+    if not given:
+        raise ValueError(f"파라미터가 필요합니다 (필요: {params})")
+    if len(given) == len(params):                       # 전체 지정 → 정확한 라벨
+        parts = [given[p] for p in params]
+        return "_".join(parts), parts
+    # 부분 지정 → 주어진 값과 일치하는 수집본 아무거나
+    for stem, p in _dataset_params():
+        if all(str(p.get(k)) == v for k, v in given.items()):
+            return stem, [str(p[mp]) for mp in params]
+    raise ValueError(f"부분 지정 {given} 에 맞는 수집본이 없습니다 (필요 전체: {params})")
 
 
 class Handler(BaseHTTPRequestHandler):

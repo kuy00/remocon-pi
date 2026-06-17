@@ -116,17 +116,22 @@ IR_HTTP_TOKEN=s3cret python3 ir_server.py   # Bearer 토큰 인증 켜기(권장
 |------|------|------|
 | `GET /health` | — | `{"ok": true}` |
 | `GET /list` | — | `{"configs": [{"label","confidence","synthetic"}, ...]}` |
-| `POST /send` | `{"mode","temp","power"}` 또는 `{"label":"냉방_25_on"}` | `{"ok": true, "label", "source", "segs"}` |
+| `POST /send` | `{"mode","temp","power"}` · 부분 지정 · `{"label":"냉방_25_on"}` | `{"ok": true, "label", "source", "segs"}` |
 
 ```bash
 # 파라미터로 (model.json 의 params 순서로 라벨 조립) / 또는 라벨 직접
 curl -X POST http://<pi-ip>:8000/send -H 'Content-Type: application/json' \
      -d '{"mode":"냉방","temp":25,"power":"on"}'
 curl -X POST http://<pi-ip>:8000/send -d '{"label":"냉방_25_on"}'
+# 끌 때는 온도 생략 가능 — 같은 off 수집본을 매칭 (온도 무관)
+curl -X POST http://<pi-ip>:8000/send -d '{"power":"off"}'
 # 토큰 인증을 켰다면
 curl -X POST http://<pi-ip>:8000/send -H 'Authorization: Bearer s3cret' -d '{"label":"냉방_25_on"}'
 ```
 
+- **부분 지정**: 일부 파라미터만 주면 그 값과 일치하는 수집본 아무거나 매칭한다. 끌 때 온도가
+  무관하므로 `{"power":"off"}`(또는 `{"mode":..,"power":"off"}`)면 충분 — 봇이 온도를 챙길 필요 없다.
+  (생략한 축이 실제로 무관할 때만 안전. 켤 때 온도를 생략하면 임의 온도가 잡히니 전체 지정 권장.)
 - `ir_send`와 동일하게 **수집본 있으면 replay, 없으면 합성** 송신한다(`source`에 명시).
 - 오류 응답: 본문 오류 `400`, 라벨/수집본 없음 `404`, pigpiod 미연결·모델 없음·합성 불가 `503`, 토큰 불일치 `401`.
 - 인증은 `IR_HTTP_TOKEN`이 비어 있으면 무인증(LAN 전용 가정). 외부 노출 없이 **LAN 안에서만** 쓰는 것을 전제로 한다.
