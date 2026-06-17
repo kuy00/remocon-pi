@@ -25,6 +25,7 @@ python3 ir_send.py --list
 python3 ir_send.py 냉방 21 on            # 수집됐으면 재생(replay)
 python3 ir_send.py 냉방 25 on            # 미수집이면 model.json으로 자동 합성 송신
 python3 ir_synth.py 냉방 25 on --dry     # (선택) 합성 결과만 확인 — 송신 안 함
+python3 ir_synth.py 냉방 25 on --dry --save # (선택) 합성본을 dataset/에 저장
 ```
 
 ## 설정
@@ -55,7 +56,7 @@ IR_TX_GPIO=17 python3 ir_send.py 난방 30 off
 |------|------|
 | `ir_collect.py` | 수집 — `sweep.json` 스윕 × 8회 반복 × 신뢰도 게이트 → `dataset/` 저장 |
 | `ir_learn.py` | 학습 — `dataset/` 자동 분석(필드 발견·체크섬 탐색) → `model.json` |
-| `ir_synth.py` | 합성 — `model.json` 규칙 + 가장 가까운 수집본 템플릿으로 미수집 조합 신호 생성·송신 (위치 하드코딩 없음) |
+| `ir_synth.py` | 합성 — `model.json` 규칙 + 가장 가까운 수집본 템플릿으로 미수집 조합 신호 생성·저장·송신 (위치 하드코딩 없음) |
 | `ir_send.py` | 송신 — 수집본 재생(replay), 미수집이면 `model.json`으로 자동 합성 송신 |
 | `ir_codec.py` | 공통 — raw 펄스 ↔ 비트/바이트, 신뢰도 계산 (하드웨어 무관·순수 로직) |
 | `ir_io.py` | 공통 — pigpio 저수준 I/O: 수신 collector + 송신 캐리어/파형 |
@@ -74,7 +75,7 @@ IR_TX_GPIO=17 python3 ir_send.py 난방 30 off
 
 ## 데이터
 
-- `dataset/` — `ir_collect.py` 출력. 설정별 `params` + 반복 raw 펄스 + 신뢰도 (gitignore 권장)
+- `dataset/` — `ir_collect.py` 출력. 설정별 `params` + 반복 raw 펄스 + 신뢰도 (합성 저장본은 `synthetic: true`, gitignore 권장)
 - `model.json` — `ir_learn.py` 출력. 학습된 프로토콜 규칙
 
 ## 테스트

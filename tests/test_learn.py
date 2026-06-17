@@ -63,3 +63,22 @@ def test_sum_pair_rejects_wrong_pair():
         return any(len(v) > 1 for v in groups.values())
     assert varies_in_group((0, 4)) is True    # C1
     assert varies_in_group((0, 1)) is False   # 모드바이트 → 후보 아님
+
+
+def test_load_dataset_skips_synthetic_by_default(tmp_path, make_segs):
+    import json
+
+    real = {
+        "params": {"mode": "A", "temp": 24, "power": "x"},
+        "confidence": 1.0,
+        "repeats": [make_segs([[0xAA, 0x11]])],
+    }
+    synth = dict(real, params={"mode": "A", "temp": 25, "power": "x"}, synthetic=True)
+    (tmp_path / "A_24_x.json").write_text(json.dumps(real), encoding="utf-8")
+    (tmp_path / "A_25_x.json").write_text(json.dumps(synth), encoding="utf-8")
+
+    samples, _ = ir_learn.load_dataset(tmp_path)
+    assert [s["params"]["temp"] for s in samples] == [24]
+
+    samples, _ = ir_learn.load_dataset(tmp_path, include_synthetic=True)
+    assert sorted(s["params"]["temp"] for s in samples) == [24, 25]

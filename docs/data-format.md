@@ -30,6 +30,27 @@
 
 `params`의 키는 `sweep.json`의 축이며 리모컨마다 자유롭게 정의한다(하드코딩 아님).
 
+## 합성 저장 파일 — `synthetic: true`
+
+`ir_synth.py --save`는 같은 dataset 호환 구조로 합성본을 저장한다. `repeats`에는 합성된
+raw 펄스 1개가 들어가므로 `ir_send.py`가 일반 수집본처럼 replay할 수 있다. 대신 실제 수집
+데이터와 구분되도록 `synthetic: true`를 붙이며, `ir_learn.py`는 기본적으로 이 파일을 학습에서
+제외한다(`--include-synthetic` 사용 시 포함).
+
+```jsonc
+{
+  "params": { "mode": "냉방", "temp": 22, "power": "on" },
+  "synthetic": true,
+  "source": "ir_synth.py",
+  "template": "냉방_21_on.json",
+  "template_params": { "mode": "냉방", "temp": 21, "power": "on" },
+  "template_confidence": 1.0,
+  "template_distance": 1,
+  "frames": [[211, 33, 57, 6, 2, 196], [34, 128, 144, 0, 134, 227]],
+  "repeats": [segs]
+}
+```
+
 ## 디코딩 (segs → 바이트), 타이밍 무관
 
 `ir_codec.py`가 담당한다.
@@ -65,6 +86,7 @@
 
 > **합성(`ir_synth.py`)**: 온도 바이트는 선형으로 계산하고, `frame_sum_pair`는 가장 가까운
 > 수집본을 템플릿으로 한 멤버(예: B5)를 그대로 두고 다른 멤버(B4)로 합을 보존한다.
+> `complex` 바이트는 가장 가까운 수집본의 값을 유지한다.
 
 > 미해독(`complex`) 바이트가 0이면 그 프레임은 완전 합성 가능. 남으면 해당 프레임은
 > 가장 가까운 수집본을 replay 한다. 체크섬 해독은 **깨끗한 데이터(높은 신뢰도)**가 전제다.

@@ -17,6 +17,7 @@
 사용:
   python3 ir_synth.py 냉방 25 on                 # 합성 후 송신 (model.json 사용)
   python3 ir_synth.py 냉방 25 on --dry           # 송신 없이 합성 바이트 + 자가검증
+  python3 ir_synth.py 냉방 25 on --dry --save    # 합성 결과를 dataset/냉방_25_on.json 로 저장
   python3 ir_synth.py 냉방 25 on --template 냉방_24_on
   python3 ir_synth.py 냉방 25 on --dataset dataset_cool --model model.json
 """
@@ -167,6 +168,11 @@ def _hex(frames):
     return " | ".join(" ".join(f"{b:02X}" for b in f) for f in frames)
 
 
+def label_for_params(pnames, tparams):
+    """모델 파라미터 순서대로 dataset 라벨을 만든다."""
+    return "_".join(str(tparams[p]) for p in pnames)
+
+
 def synthesize(model, dataset_dir, tparams, template=None):
     """model 규칙 + 가장 가까운 수집본 템플릿으로 tparams 조합의 segs 를 합성한다.
 
@@ -194,11 +200,41 @@ def synthesize(model, dataset_dir, tparams, template=None):
         raise SystemExit("쓸 만한 템플릿 없음 (반복본이 합의와 불일치 — 재수집 필요)")
 
     good = [c for c in cands if c[1] >= 0.9] or cands
-    dist, conf, _tp, tpath, template_segs, tpl_frames = min(good, key=lambda c: (c[0], -c[1]))
+    dist, conf, tp, tpath, template_segs, tpl_frames = min(good, key=lambda c: (c[0], -c[1]))
     target_frames, notes = compute_target_frames(model, tpl_frames, tparams)
     return {"segs": synth_segs(template_segs, target_frames), "target": target_frames,
-            "template": tpath, "tpl_frames": tpl_frames, "conf": conf, "dist": dist,
-            "notes": notes, "good": bool([c for c in cands if c[1] >= 0.9])}
+            "template": tpath, "template_params": tp, "tpl_frames": tpl_frames,
+            "conf": conf, "dist": dist, "notes": notes,
+            "good": bool([c for c in cands if c[1] >= 0.9])}
+
+
+def save_synthetic(out_dir, label, tparams, res, force=False):
+    """합성 segs 를 dataset 호환 JSON으로 저장한다.
+
+    synthetic 표식을 붙여 ir_learn.py 기본 학습에서는 제외한다. 저장본은 ir_send.py가
+    일반 dataset 파일처럼 replay할 수 있다.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"{label}.json"
+    if out_file.exists() and not force:
+        raise SystemExit(f"저장 대상 존재: {out_file} — 덮어쓰려면 --force")
+    payload = {
+        "params": tparams,
+        "synthetic": True,
+        "source": "ir_synth.py",
+        "template": Path(res["template"]).name,
+        "template_params": res["template_params"],
+        "template_confidence": res["conf"],
+        "template_distance": res["dist"],
+        "notes": res["notes"],
+        "n_repeats": 1,
+        "confidence": None,
+        "frames": res["target"],
+        "repeats": [res["segs"]],
+    }
+    out_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out_file
 
 
 def parse_params(pnames, values):
@@ -213,9 +249,12 @@ def main():
     ap.add_argument("params", nargs="+", help="모델 파라미터 순서대로 (예: 냉방 25 on)")
     ap.add_argument("--model", default=str(config.MODEL_FILE), help="학습 모델 경로")
     ap.add_argument("--dataset", default=str(DATASET_DIR), help="템플릿 수집 데이터 경로")
+    ap.add_argument("--out-dir", default=None, help="--save 저장 경로 (기본 --dataset 경로)")
     ap.add_argument("--template", default=None, help="템플릿 라벨 직접 지정 (예: 냉방_24_on)")
     ap.add_argument("--gpio", type=int, default=config.IR_TX_GPIO)
     ap.add_argument("--dry", action="store_true", help="송신 없이 합성 바이트만 출력")
+    ap.add_argument("--save", action="store_true", help="합성 결과를 dataset 호환 JSON으로 저장")
+    ap.add_argument("--force", action="store_true", help="--save 시 기존 파일 덮어쓰기")
     args = ap.parse_args()
 
     mpath = Path(args.model)
@@ -229,7 +268,7 @@ def main():
     res = synthesize(model, args.dataset, tparams, template=args.template)
     new_segs, target_frames = res["segs"], res["target"]
 
-    label = "_".join(str(tparams[p]) for p in pnames)
+    label = label_for_params(pnames, tparams)
     print(f"합성: {label}")
     print(f"  모델: {mpath.name}   템플릿: {Path(res['template']).name} "
           f"(신뢰도 {res['conf']:.0%}, 거리 {res['dist']})")
@@ -245,7 +284,14 @@ def main():
         ok = rt == target_frames
         print(f"  segs={len(new_segs)}  자가검증(재디코딩 일치): "
               f"{'OK ✅' if ok else f'불일치 {_hex(rt)}'}")
+        if args.save:
+            out_file = save_synthetic(args.out_dir or args.dataset, label, tparams, res, args.force)
+            print(f"  저장: {out_file}")
         return
+
+    if args.save:
+        out_file = save_synthetic(args.out_dir or args.dataset, label, tparams, res, args.force)
+        print(f"  저장: {out_file}")
 
     import pigpio
     from ir_io import transmit_segs

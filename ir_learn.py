@@ -26,12 +26,14 @@ MODEL_OUT = Path("model.json")
 
 
 # ── 데이터셋 적재 (ir_collect.py 출력: params + repeats) ──────
-def load_dataset(data_dir=None):
+def load_dataset(data_dir=None, include_synthetic=False):
     data_dir = Path(data_dir) if data_dir else DATA_DIR
     samples = []  # {"params": {...}, "frames": [[..],[..]], "confidence": x}
     low_conf = []
     for f in sorted(glob.glob(str(data_dir / "*.json"))):
         d = json.loads(Path(f).read_text(encoding="utf-8"))
+        if d.get("synthetic") and not include_synthetic:
+            continue
         reps = d.get("repeats", [])
         if not reps:
             continue
@@ -207,10 +209,12 @@ def main():
     ap = argparse.ArgumentParser(description="수집 데이터에서 IR 프로토콜 규칙 자동 학습")
     ap.add_argument("--dataset", default=str(DATA_DIR), help=f"수집 데이터 경로 (기본 {DATA_DIR})")
     ap.add_argument("--out", default=str(MODEL_OUT), help=f"모델 출력 경로 (기본 {MODEL_OUT})")
+    ap.add_argument("--include-synthetic", action="store_true",
+                    help="synthetic:true 합성 파일도 학습에 포함 (기본 제외)")
     args = ap.parse_args()
     out_file = Path(args.out)
 
-    samples, low_conf = load_dataset(args.dataset)
+    samples, low_conf = load_dataset(args.dataset, include_synthetic=args.include_synthetic)
     if not samples:
         print(f"데이터 없음 ({args.dataset}/ 비어있음) — 먼저 ir_collect.py 로 수집")
         return

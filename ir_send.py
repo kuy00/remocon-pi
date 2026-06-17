@@ -26,7 +26,7 @@ DATASET_DIR = config.DATASET_DIR
 
 
 def load_segs(label):
-    """dataset/{label}.json 의 첫 반복본 raw segs 반환 (replay용)."""
+    """dataset/{label}.json 의 첫 반복본 raw segs 와 메타데이터 반환 (replay용)."""
     fpath = DATASET_DIR / f"{label}.json"
     if not fpath.exists():
         raise FileNotFoundError(f"{fpath} 없음 — '--list'로 수집된 설정 확인")
@@ -34,7 +34,7 @@ def load_segs(label):
     reps = data.get("repeats")
     if not reps:
         raise ValueError(f"{fpath} 에 repeats 데이터 없음")
-    return reps[0], data.get("confidence")
+    return reps[0], data
 
 
 def synth_fallback(label, values):
@@ -66,6 +66,8 @@ def list_available():
             d = json.loads(f.read_text(encoding="utf-8"))
             conf = d.get("confidence")
             tag = f" (신뢰도 {conf:.0%})" if isinstance(conf, (int, float)) else ""
+            if d.get("synthetic"):
+                tag += " [synthetic]"
         except Exception:
             tag = ""
         print(f"  {f.stem}{tag}")
@@ -96,8 +98,12 @@ def main():
 
     # 수집본 있으면 재생, 없으면 model.json 으로 합성
     try:
-        segs, conf = load_segs(label)
-        source = f"replay, 신뢰도 {conf:.0%}" if isinstance(conf, (int, float)) else "replay"
+        segs, meta = load_segs(label)
+        conf = meta.get("confidence")
+        if meta.get("synthetic"):
+            source = f"synthetic replay (템플릿 {meta.get('template', '?')})"
+        else:
+            source = f"replay, 신뢰도 {conf:.0%}" if isinstance(conf, (int, float)) else "replay"
     except FileNotFoundError:
         segs, source = synth_fallback(label, args.parts)
 

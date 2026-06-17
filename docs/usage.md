@@ -34,11 +34,14 @@ python3 ir_collect.py --no-interleave     # 교차 끄기 — 설정당 연속 8
 
 ```bash
 python3 ir_learn.py
+python3 ir_learn.py --include-synthetic  # 필요할 때만 합성 저장본까지 포함
 ```
 
 - 반복본 다수결로 노이즈 제거, 신뢰도 낮은 설정 경고
 - 바이트별 자동 분류: 상수 / 필드(파라미터·선형/룩업) / 체크섬 / 미해독(complex)
 - 미해독 바이트가 0이면 완전 합성 가능, 남으면 그 프레임은 replay 필요
+- `synthetic: true` 합성 저장본은 기본 학습에서 제외한다. 실제 수집 데이터만으로 모델을
+  갱신하기 위함이며, 꼭 포함하려면 `--include-synthetic`을 사용한다.
 
 ## 3. 모니터 — `ir_monitor.py`
 
@@ -80,14 +83,21 @@ python3 ir_send.py 냉방 21 on --gpio 17 # 송신 핀 변경
 ```bash
 python3 ir_synth.py 냉방 25 on                       # model.json 규칙으로 합성 후 송신
 python3 ir_synth.py 냉방 25 on --dry                 # 송신 없이 합성 바이트 + 자가검증
+python3 ir_synth.py 냉방 25 on --dry --save          # 합성본을 dataset/냉방_25_on.json 로 저장
+python3 ir_synth.py 냉방 25 on --dry --save --out-dir dataset_synth
 python3 ir_synth.py 냉방 25 on --template 냉방_24_on  # 템플릿 라벨 지정
 python3 ir_synth.py 냉방 25 on --dataset dataset_cool --model model.json
 ```
 
 - 파라미터는 모델의 `params` 순서대로 입력(예: `mode temp power`). 숫자는 자동 인식.
+- 템플릿 선택: 문자열 파라미터(예: `mode`, `power`)가 같은 수집본만 후보로 보고,
+  숫자 파라미터(예: `temp`) 차이 합이 가장 작은 파일을 고른다. 동률이면 신뢰도가 높은 파일 우선.
 - 모델 규칙별 처리: `const`→고정, `field linear`→계산(외삽), `field lookup`→표/없으면 템플릿,
   `checksum frame_sum_pair`→그룹 합 상수를 만족하도록 멤버 보정, `complex`→템플릿값(그 바이트는 replay)
 - `--dry`는 합성 결과를 다시 디코딩해 목표 바이트와 일치하는지 자가검증(송신 없음, 하드웨어 불필요)
+- `--save`는 합성 raw 펄스를 dataset 호환 JSON으로 저장한다. 저장본에는 `synthetic: true`가 붙고,
+  `ir_send.py`는 이를 replay할 수 있지만 `ir_learn.py`는 기본적으로 다시 학습하지 않는다.
+- 기존 파일이 있으면 덮어쓰지 않는다. 덮어쓰려면 `--force`를 함께 사용한다.
 - **주의**: 체크섬 분할이 실측과 다를 수 있다(전체 합은 보존). 에어컨이 전체합만 검증하면 그대로
   동작하고, 멤버를 개별 검증하면 인접 템플릿일수록 안전하다. 처음엔 `--dry`로 확인 후 송신 권장.
 
@@ -102,3 +112,7 @@ python3 ir_synth.py 냉방 25 on --dataset dataset_cool --model model.json
   "repeats": [ [[0,6800],[1,3330], ...], ... ]   // 8회분 raw 펄스
 }
 ```
+
+합성 저장본은 같은 구조를 유지하되 `synthetic: true`, `template`, `template_params`,
+`template_confidence`, `frames` 같은 메타데이터를 추가로 가진다. 실제 리모컨 수집본과
+구분되므로 모델 재학습에는 기본 포함되지 않는다.

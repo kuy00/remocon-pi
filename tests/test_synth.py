@@ -66,3 +66,21 @@ def test_synthesize_end_to_end(tmp_path, make_segs):
     assert decoded == res["target"]
     assert decoded[0][2] == 25 - 16                  # 온도 바이트
     assert sum(decoded[0]) == 0x200                  # 체크섬 합 보존
+
+
+def test_save_synthetic_marks_dataset_file(tmp_path, make_segs):
+    """저장된 합성본은 replay 가능한 repeats 와 synthetic 메타데이터를 가진다."""
+    import json
+
+    _write_sample(tmp_path, "A", 24, "x", [[0xAA, 0x11, 0x08, 0xBB, 0x33, 0x4F]], make_segs)
+    tparams = {"mode": "A", "temp": 25, "power": "x"}
+    res = ir_synth.synthesize(_model(), str(tmp_path), tparams)
+    label = ir_synth.label_for_params(_model()["params"], tparams)
+
+    out = ir_synth.save_synthetic(tmp_path, label, tparams, res)
+    data = json.loads(out.read_text(encoding="utf-8"))
+
+    assert data["synthetic"] is True
+    assert data["template"] == "A_24_x.json"
+    assert data["params"] == tparams
+    assert ir_codec.segs_to_byteframes(data["repeats"][0]) == res["target"]
