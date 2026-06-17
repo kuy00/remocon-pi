@@ -8,6 +8,8 @@
 - 교차 수집(기본): `order`의 마지막 축(예: power on/off)을 한 라운드에 한 번씩
   번갈아 캡처(on→off→on→off…×N). 전원 토글식 리모컨은 어차피 on/off를 오가야
   하므로 이 순서가 자연스럽다. `--no-interleave`로 설정당 연속 N회 방식으로 끌 수 있다.
+- 재촬영도 그룹 전체를 교차로 누른다 — 통과한 멤버는 토글 유지용으로 누르되 캡처는
+  버리고(저장 안 함), 미달 멤버만 새로 채운다. on/off 교차 순서를 재촬영에서도 유지.
 
 사용: python3 ir_collect.py            # sweep.json 전체 수집 (마지막 축 교차)
       python3 ir_collect.py --sweep my.json --out dataset
@@ -68,28 +70,35 @@ def capture_group(rx, members, order):
     """한 교차 그룹(예: on/off)을 라운드 단위로 번갈아 N회씩 캡처.
 
     각 라운드마다 멤버를 한 번씩(on→off→…) 캡처한다. N라운드 후 멤버별로
-    신뢰도를 계산하고, 기준 미달 멤버만 다시 교차로 재촬영한다.
-    재촬영 화면에서 Enter=재촬영, 's'=현재본 저장하고 진행(수동 예외).
+    신뢰도를 계산하고, 기준 미달 멤버만 다시 채운다.
+
+    재촬영도 **그룹 전체를 교차로** 누른다 — 전원 토글식 리모컨은 off를 다시 찍으려면
+    on을 거쳐야 하므로, 통과한 멤버도 토글 유지용으로 누르되 그 캡처는 버리고(저장 안 함)
+    미달 멤버의 캡처만 새로 저장한다. 화면에서 Enter=재촬영, 's'=현재본 저장하고 진행.
     반환: [(params, repeats, conf), ...] (members 순서 유지).
     """
     names = [label(m, order) for m in members]
     collected = {n: [] for n in names}
     title = " / ".join(names)
+    all_targets = list(zip(names, members))   # 라운드마다 누를 전체 순서(on→off→…)
 
-    def run_rounds(targets, note=""):
-        # targets: [(name, params)] — 라운드마다 이 순서대로 한 번씩 캡처
+    def run_rounds(record, note=""):
+        # record: 이번에 '저장'할 멤버 이름 집합. 그 외 멤버는 토글 유지용으로
+        # 눌러서 받되 저장하지 않는다(전원 토글 리모컨의 on/off 교차 유지).
         input(f"\n>>> [{title}] 교차 수집{note} — 안내대로 버튼을 누르세요. 준비되면 Enter: ")
         for r in range(1, N_REPEATS + 1):
-            for name, _ in targets:
-                done = len(collected[name]) + 1
-                print(f"    라운드 {r}/{N_REPEATS} — [{name}] 버튼을 누르세요 ({done}/{N_REPEATS})...")
+            for name, _ in all_targets:
+                keep = name in record
+                tag = f" ({len(collected[name])+1}/{N_REPEATS})" if keep else " (토글용·저장 안 함)"
+                print(f"    라운드 {r}/{N_REPEATS} — [{name}] 버튼을 누르세요{tag}...")
                 rx.clear()
                 segs = rx.wait_one()
-                collected[name].append(segs)
+                if keep:
+                    collected[name].append(segs)
                 print(f"      수집 (segs={len(segs)})")
                 time.sleep(0.3)
 
-    run_rounds(list(zip(names, members)))
+    run_rounds(set(names))
     while True:
         failing = []
         for m, name in zip(members, names):
@@ -97,18 +106,17 @@ def capture_group(rx, members, order):
             mark = "✅" if conf >= MIN_AGREE else "⚠️"
             print(f"    {name}: 신뢰도 {conf:.0%} {mark}")
             if conf < MIN_AGREE:
-                failing.append((name, m))
+                failing.append(name)
         if not failing:
             break
-        fail_names = ", ".join(n for n, _ in failing)
-        ans = input(f"\n>>> [{fail_names}] 기준({MIN_AGREE:.0%}) 미달 — "
-                    f"Enter=재촬영, s=현재본 저장하고 진행: ").strip().lower()
+        ans = input(f"\n>>> [{', '.join(failing)}] 기준({MIN_AGREE:.0%}) 미달 — "
+                    f"Enter=재촬영(그룹 전체 교차), s=현재본 저장하고 진행: ").strip().lower()
         if ans == "s":
             print("    수동 진행 — 현재본 저장")
             break
-        for name, _ in failing:
+        for name in failing:
             collected[name] = []
-        run_rounds(failing, note=" 재촬영")
+        run_rounds(set(failing), note=" 재촬영")
 
     return [(m, collected[n], ir_codec.consensus(collected[n])[1])
             for m, n in zip(members, names)]
