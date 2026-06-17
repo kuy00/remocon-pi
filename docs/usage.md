@@ -131,6 +131,27 @@ curl -X POST http://<pi-ip>:8000/send -H 'Authorization: Bearer s3cret' -d '{"la
 - 오류 응답: 본문 오류 `400`, 라벨/수집본 없음 `404`, pigpiod 미연결·모델 없음·합성 불가 `503`, 토큰 불일치 `401`.
 - 인증은 `IR_HTTP_TOKEN`이 비어 있으면 무인증(LAN 전용 가정). 외부 노출 없이 **LAN 안에서만** 쓰는 것을 전제로 한다.
 
+### 부팅 시 자동 실행 (systemd)
+
+`deploy/ir-server.service` 유닛으로 서버를 **부팅 시 자동 실행 + 죽으면 자동 재시작**할 수 있다.
+`pigpiod` 가 먼저 떠야 송신이 되므로 유닛이 `pigpiod.service` 를 선행 의존으로 둔다.
+
+```bash
+sudo cp deploy/ir-server.service /etc/systemd/system/ir-server.service
+# 경로/사용자/파이썬 경로가 다르면 편집: WorkingDirectory, User, ExecStart
+sudo systemctl daemon-reload
+sudo systemctl enable --now pigpiod      # 송신 전제 데몬도 부팅 자동 실행
+sudo systemctl enable --now ir-server    # 서버 부팅 자동 실행 + 즉시 시작
+
+systemctl status ir-server               # 상태
+journalctl -u ir-server -f               # 실시간 로그
+sudo systemctl restart ir-server         # 코드/설정 변경 후 재시작 (git pull 뒤)
+```
+
+- 포트·토큰 등 설정은 프로젝트 `.env` 가 자동 로드된다(`config.py`). systemd 에서 직접 주려면
+  유닛의 `Environment=` 또는 `EnvironmentFile=` 줄을 쓴다.
+- 기본 `WorkingDirectory`/`User` 는 `/home/ubuntu/workspace/remocon-pi`, `ubuntu` 기준이라 환경에 맞게 수정.
+
 ## 데이터 형식 한눈에
 
 ```jsonc

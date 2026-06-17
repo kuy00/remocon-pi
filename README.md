@@ -33,6 +33,8 @@ curl -X POST http://<pi-ip>:8000/send \
      -H 'Content-Type: application/json' -d '{"mode":"냉방","temp":25,"power":"on"}'
 ```
 
+> 부팅 시 자동 실행은 `deploy/ir-server.service`(systemd) 사용 — [docs/usage.md](docs/usage.md#부팅-시-자동-실행-systemd) 참고.
+
 ## 설정
 
 핀 번호·pigpiod 호스트·데이터 경로 등은 환경변수(또는 `.env`)로 바꿀 수 있다.
