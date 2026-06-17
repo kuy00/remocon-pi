@@ -167,6 +167,40 @@ def _hex(frames):
     return " | ".join(" ".join(f"{b:02X}" for b in f) for f in frames)
 
 
+def synthesize(model, dataset_dir, tparams, template=None):
+    """model 규칙 + 가장 가까운 수집본 템플릿으로 tparams 조합의 segs 를 합성한다.
+
+    반환 dict: segs, target(바이트), template(경로), tpl_frames, conf, dist, notes, good.
+    템플릿이 없거나 그룹 상수 미학습이면 SystemExit.
+    """
+    pnames = model["params"]
+    categorical = [p for p in pnames if isinstance(tparams[p], str)]
+    numeric = [p for p in pnames if not isinstance(tparams[p], str)]
+
+    group = list_group(dataset_dir, tparams, categorical)
+    if template:
+        group = [(p, f) for p, f in group if f.stem == template]
+    if not group:
+        raise SystemExit("템플릿 없음 — 같은 범주형 그룹의 수집본이 필요(--dataset 확인)")
+
+    cands = []
+    for p, f in group:
+        clean, frames, conf = load_clean(f)
+        if clean is None or not frames:
+            continue
+        dist = sum(abs(p[n] - tparams[n]) for n in numeric) if numeric else 0
+        cands.append((dist, conf, p, f, clean, frames))
+    if not cands:
+        raise SystemExit("쓸 만한 템플릿 없음 (반복본이 합의와 불일치 — 재수집 필요)")
+
+    good = [c for c in cands if c[1] >= 0.9] or cands
+    dist, conf, _tp, tpath, template_segs, tpl_frames = min(good, key=lambda c: (c[0], -c[1]))
+    target_frames, notes = compute_target_frames(model, tpl_frames, tparams)
+    return {"segs": synth_segs(template_segs, target_frames), "target": target_frames,
+            "template": tpath, "tpl_frames": tpl_frames, "conf": conf, "dist": dist,
+            "notes": notes, "good": bool([c for c in cands if c[1] >= 0.9])}
+
+
 def parse_params(pnames, values):
     if len(values) != len(pnames):
         raise SystemExit(f"파라미터 {pnames} 순서로 {len(pnames)}개 값 필요 — 받음: {values}")
@@ -191,41 +225,20 @@ def main():
     model = json.loads(mpath.read_text(encoding="utf-8"))
     pnames = model["params"]
     tparams = parse_params(pnames, args.params)
-    categorical = [p for p in pnames if isinstance(tparams[p], str)]
-    numeric = [p for p in pnames if not isinstance(tparams[p], str)]
 
-    group = list_group(args.dataset, tparams, categorical)
-    if args.template:
-        group = [(p, f) for p, f in group if f.stem == args.template]
-    if not group:
-        raise SystemExit("템플릿 없음 — 같은 범주형 그룹의 수집본이 필요(--dataset 확인)")
-
-    cands = []
-    for p, f in group:
-        clean, frames, conf = load_clean(f)
-        if clean is None or not frames:
-            continue
-        dist = sum(abs(p[n] - tparams[n]) for n in numeric) if numeric else 0
-        cands.append((dist, conf, p, f, clean, frames))
-    if not cands:
-        raise SystemExit("쓸 만한 템플릿 없음 (반복본이 합의와 불일치 — 재수집 필요)")
-
-    good = [c for c in cands if c[1] >= 0.9] or cands
-    dist, conf, tp, tpath, template_segs, tpl_frames = min(good, key=lambda c: (c[0], -c[1]))
-
-    target_frames, notes = compute_target_frames(model, tpl_frames, tparams)
+    res = synthesize(model, args.dataset, tparams, template=args.template)
+    new_segs, target_frames = res["segs"], res["target"]
 
     label = "_".join(str(tparams[p]) for p in pnames)
     print(f"합성: {label}")
-    print(f"  모델: {mpath.name}   템플릿: {tpath.name} (신뢰도 {conf:.0%}, 거리 {dist})")
-    print(f"  템플릿 바이트: {_hex(tpl_frames)}")
+    print(f"  모델: {mpath.name}   템플릿: {Path(res['template']).name} "
+          f"(신뢰도 {res['conf']:.0%}, 거리 {res['dist']})")
+    print(f"  템플릿 바이트: {_hex(res['tpl_frames'])}")
     print(f"  합성   바이트: {_hex(target_frames)}")
-    for n in notes:
+    for n in res["notes"]:
         print(f"  · {n}")
-    if not good or conf < 0.9:
+    if not res["good"]:
         print("  ⚠ 고신뢰(>=90%) 템플릿이 없어 노이즈 가능 — 해당 그룹 재수집 권장")
-
-    new_segs = synth_segs(template_segs, target_frames)
 
     if args.dry:
         rt = ir_codec.segs_to_byteframes(new_segs)

@@ -45,3 +45,24 @@ def test_synth_segs_roundtrip(make_segs):
     target, _ = ir_synth.compute_target_frames(_model(), tpl_frames, {"mode": "A", "temp": 25, "power": "x"})
     new_segs = ir_synth.synth_segs(template_segs, target)
     assert ir_codec.segs_to_byteframes(new_segs) == target
+
+
+def _write_sample(d, mode, temp, power, frames, make_segs):
+    import json
+    segs = make_segs(frames)
+    (d / f"{mode}_{temp}_{power}.json").write_text(json.dumps(
+        {"params": {"mode": mode, "temp": temp, "power": power},
+         "confidence": 1.0, "repeats": [segs, segs, segs]}), encoding="utf-8")
+
+
+def test_synthesize_end_to_end(tmp_path, make_segs):
+    """디스크 수집본(18,24만) + model → 미수집 25 합성: 템플릿 선택~서지컬까지."""
+    # 18,24 수집 (전체합 0x200 유지)
+    _write_sample(tmp_path, "A", 18, "x", [[0xAA, 0x11, 0x02, 0xBB, 0x39, 0x4F]], make_segs)
+    _write_sample(tmp_path, "A", 24, "x", [[0xAA, 0x11, 0x08, 0xBB, 0x33, 0x4F]], make_segs)
+    res = ir_synth.synthesize(_model(), str(tmp_path), {"mode": "A", "temp": 25, "power": "x"})
+    assert res["template"].stem == "A_24_x"          # 가장 가까운 온도 선택
+    decoded = ir_codec.segs_to_byteframes(res["segs"])
+    assert decoded == res["target"]
+    assert decoded[0][2] == 25 - 16                  # 온도 바이트
+    assert sum(decoded[0]) == 0x200                  # 체크섬 합 보존

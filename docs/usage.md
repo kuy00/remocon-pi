@@ -45,17 +45,21 @@ python3 ir_monitor.py
 
 ## 4. 송신(제어) — `ir_send.py`
 
-`dataset/`의 저장 펄스를 재생해 에어컨을 제어한다.
+설정을 송신해 에어컨을 제어한다. **수집본이 있으면 재생(replay), 없으면 `model.json`으로
+자동 합성**해 보낸다(아래 `ir_synth` 로직 재사용).
 
 ```bash
 python3 ir_send.py --list              # 수집된 설정 목록(+신뢰도)
-python3 ir_send.py 냉방 21 on          # dataset/냉방_21_on.json 재생
+python3 ir_send.py 냉방 21 on          # 수집됐으면 dataset/냉방_21_on.json 재생
+python3 ir_send.py 냉방 25 on          # 미수집이면 자동 합성 송신 (콘솔에 "합성" 표시)
 python3 ir_send.py --label 냉방_21_on  # 라벨 직접 지정
 python3 ir_send.py 냉방 21 on --gpio 17 # 송신 핀 변경
 ```
 
 - 위치인자를 `_`로 결합해 `dataset/{라벨}.json`을 찾는다(수집 시 `sweep.json` order 순서와 맞춰 입력)
-- 동작 방식: 저장된 `level 0 → 38kHz 캐리어 ON(mark)`, `level 1 → OFF(space)`로 변환해 pigpio wave API로 정확히 송신
+- 수집본 있음 → 저장된 `level 0 → 38kHz 캐리어 ON(mark)`, `level 1 → OFF(space)`로 변환해 송신
+- 수집본 없음 → `model.json` + 가장 가까운 수집본으로 합성(`ir_synth.synthesize`). 콘솔에 `replay`/`합성` 명시
+- 모델이 없거나 그 그룹이 합성 불가면 → "수집/학습 필요" 안내 후 종료
 
 ## 5. 합성 송신 — `ir_synth.py`
 

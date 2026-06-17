@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""수집된 IR 데이터(dataset/)를 그대로 재생하여 에어컨을 제어한다.
+"""수집된 IR 데이터로 에어컨을 제어한다 — 수집본이 있으면 재생, 없으면 자동 합성.
 
-녹화된 raw 펄스를 38kHz 캐리어로 다시 송신한다(replay 방식).
+- 수집본 존재: 녹화된 raw 펄스를 38kHz 캐리어로 그대로 재생(replay).
+- 수집본 없음: `model.json` 규칙 + 가장 가까운 수집본으로 합성해 송신(ir_synth 활용).
+  모델이 없거나 그 그룹이 합성 불가면 안내 후 종료.
 - 저장 데이터의 level 0 = mark(캐리어 ON), level 1 = space(캐리어 OFF)
-- pigpio wave API 사용 → time.sleep 대비 정확한 마이크로초 타이밍
 
 사용 예:
-  python3 ir_send.py 냉방 21 on        # dataset/냉방_21_on.json 재생
-  python3 ir_send.py 난방 30 off
+  python3 ir_send.py 냉방 21 on        # 수집됐으면 재생
+  python3 ir_send.py 냉방 25 on        # 미수집이면 자동 합성 송신
   python3 ir_send.py --label 냉방_21_on # 라벨 직접 지정
   python3 ir_send.py --list             # 수집된 설정 목록
 """
@@ -34,6 +35,25 @@ def load_segs(label):
     if not reps:
         raise ValueError(f"{fpath} 에 repeats 데이터 없음")
     return reps[0], data.get("confidence")
+
+
+def synth_fallback(label, values):
+    """수집본이 없을 때 model.json 으로 합성. (segs, 설명문) 반환 or SystemExit."""
+    model_file = config.MODEL_FILE
+    if not model_file.exists():
+        raise SystemExit(
+            f"'{label}' 수집본 없음 + 모델({model_file}) 없음 — "
+            f"먼저 'ir_collect.py'로 수집하거나 'ir_learn.py'로 학습, '--list'로 확인")
+    import ir_synth
+    model = json.loads(model_file.read_text(encoding="utf-8"))
+    if not values:
+        values = label.split("_")
+    tparams = ir_synth.parse_params(model["params"], values)
+    res = ir_synth.synthesize(model, str(DATASET_DIR), tparams)
+    info = f"합성 (템플릿 {res['template'].name}, 신뢰도 {res['conf']:.0%})"
+    for n in res["notes"]:
+        info += f"\n  · {n}"
+    return res["segs"], info
 
 
 def list_available():
@@ -74,16 +94,19 @@ def main():
         ap.print_help()
         sys.exit(1)
 
-    segs, conf = load_segs(label)
-    ctag = f", 신뢰도 {conf:.0%}" if isinstance(conf, (int, float)) else ""
+    # 수집본 있으면 재생, 없으면 model.json 으로 합성
+    try:
+        segs, conf = load_segs(label)
+        source = f"replay, 신뢰도 {conf:.0%}" if isinstance(conf, (int, float)) else "replay"
+    except FileNotFoundError:
+        segs, source = synth_fallback(label, args.parts)
 
     pi = config.connect()
-
     try:
         pi.set_mode(gpio, pigpio.OUTPUT)
         pi.write(gpio, 0)
         pi.wave_clear()
-        print(f"송신: {label}  (GPIO {gpio}, {CARRIER_HZ}Hz, segs={len(segs)}{ctag})")
+        print(f"송신: {label}  (GPIO {gpio}, {CARRIER_HZ}Hz, segs={len(segs)}) — {source}")
         transmit_segs(pi, gpio, segs)
         print("완료.")
     finally:
