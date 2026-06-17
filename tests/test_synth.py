@@ -31,6 +31,31 @@ def test_compute_target_linear_and_checksum():
     assert notes == []
 
 
+def test_compute_target_balances_complex_sum():
+    """complex 꼬리 바이트가 있으면 온도 변화만큼 첫 complex 바이트로 sum8을 보정."""
+    model = {"params": ["mode", "temp", "power"], "shape": [4, 2], "frames": [
+        {"len": 4, "bytes": [
+            {"index": 0, "kind": "const", "value": 0xAA},
+            {"index": 1, "kind": "field",
+             "relation": {"type": "linear", "by": ["temp"], "slope": 1.0, "base": -16.0}},
+            {"index": 2, "kind": "const", "value": 0xBB},
+            {"index": 3, "kind": "const", "value": 0xCC},
+        ]},
+        {"len": 2, "bytes": [
+            {"index": 0, "kind": "complex"},
+            {"index": 1, "kind": "complex"},
+        ]},
+    ]}
+    tpl = [[0xAA, 0x05, 0xBB, 0xCC], [0x86, 0xE3]]
+    frames, notes = ir_synth.compute_target_frames(
+        model, tpl, {"mode": "A", "temp": 22, "power": "x"})
+
+    assert frames[0][1] == 0x06
+    assert frames[1] == [0x85, 0xE3]
+    assert sum(sum(f) for f in frames) & 0xFF == sum(sum(f) for f in tpl) & 0xFF
+    assert any("complex 합 보정" in n for n in notes)
+
+
 def test_uncollected_group_raises():
     tpl = [[0xAA, 0x11, 0x08, 0xBB, 0x33, 0x4F]]
     import pytest

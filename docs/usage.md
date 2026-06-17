@@ -93,7 +93,8 @@ python3 ir_synth.py 냉방 25 on --dataset dataset_cool --model model.json
 - 템플릿 선택: 문자열 파라미터(예: `mode`, `power`)가 같은 수집본만 후보로 보고,
   숫자 파라미터(예: `temp`) 차이 합이 가장 작은 파일을 고른다. 동률이면 신뢰도가 높은 파일 우선.
 - 모델 규칙별 처리: `const`→고정, `field linear`→계산(외삽), `field lookup`→표/없으면 템플릿,
-  `checksum frame_sum_pair`→그룹 합 상수를 만족하도록 멤버 보정, `complex`→템플릿값(그 바이트는 replay)
+  `checksum frame_sum_pair`→그룹 합 상수를 만족하도록 멤버 보정,
+  `complex`→템플릿값 기반 + 전체 바이트 합(sum8) 보정
 - `--dry`는 합성 결과를 다시 디코딩해 목표 바이트와 일치하는지 자가검증(송신 없음, 하드웨어 불필요)
 - `--save`는 합성 raw 펄스를 dataset 호환 JSON으로 저장한다. 저장본에는 `synthetic: true`가 붙고,
   `ir_send.py`는 이를 replay할 수 있지만 `ir_learn.py`는 기본적으로 다시 학습하지 않는다.

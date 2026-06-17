@@ -7,7 +7,7 @@
   - `field` `linear`         : 수치 파라미터로 계산(미수집 값도 외삽)
   - `field` `lookup`         : 표 — 키가 있으면 사용, 없으면 템플릿값
   - `checksum frame_sum_pair`: 그룹별 '프레임 전체 합 상수'를 만족하도록 멤버 한 개를 보정
-  - `complex`                : 미해독 → 템플릿값 유지(그 바이트는 replay)
+  - `complex`                : 미해독 → 템플릿값 기반, 필요 시 바이트 합 보정
 
 합성 방식(서지컬): 같은 범주형 그룹의 **가장 가까운 수집본**을 타이밍 템플릿으로 삼아,
 헤더/타이밍은 실측 펄스 그대로 두고 **값이 바뀌는 비트의 space 길이만 교체**한다.
@@ -74,7 +74,7 @@ def _group_key(tparams, by):
 def compute_target_frames(model, tpl_frames, tparams):
     """템플릿 바이트에서 출발해, model 규칙으로 목표 파라미터의 바이트를 계산한다."""
     frames = [list(f) for f in tpl_frames]
-    pairs, notes = {}, []
+    pairs, notes, complex_pos = {}, [], []
     for fi, finfo in enumerate(model["frames"]):
         for e in finfo["bytes"]:
             bi = e["index"]
@@ -96,7 +96,8 @@ def compute_target_frames(model, tpl_frames, tparams):
                 cs = e["checksum"]
                 pairs.setdefault(tuple(map(tuple, cs["members"])), cs)
             elif kind == "complex":
-                notes.append(f"F{fi+1}B{bi}: complex(미해독) → 템플릿값 유지(replay)")
+                complex_pos.append((fi, bi))
+                notes.append(f"F{fi+1}B{bi}: complex(미해독) → 템플릿 기반")
             # const → 템플릿값 그대로
 
     # 체크섬 쌍 보정: 다른 바이트가 모두 확정된 뒤, 멤버 한 개로 그룹 합을 맞춘다
@@ -113,6 +114,21 @@ def compute_target_frames(model, tpl_frames, tparams):
                      for f in range(len(frames)) for b in range(len(frames[f]))
                      if (f, b) not in mset)
         frames[mlist[0][0]][mlist[0][1]] = (K - others - kept) & 0xFF
+
+    # 체크섬으로 분류되지 않은 complex 바이트가 남으면, 가장 가까운 수집본의 전체
+    # 바이트 합(8비트)을 유지하도록 첫 complex 바이트만 보정한다. 에어컨 리모컨은
+    # 미해독 꼬리 바이트가 단순 합 검증에 참여하는 경우가 많고, 템플릿값을 그대로
+    # 두면 온도 필드만 바뀌어 합이 어긋날 수 있다.
+    if complex_pos:
+        tpl_sum = sum(sum(f) for f in tpl_frames) & 0xFF
+        cur_sum = sum(sum(f) for f in frames) & 0xFF
+        delta = (cur_sum - tpl_sum) & 0xFF
+        if delta:
+            fi, bi = complex_pos[0]
+            frames[fi][bi] = (frames[fi][bi] - delta) & 0xFF
+            notes.append(
+                f"F{fi+1}B{bi}: complex 합 보정 -0x{delta:02X} "
+                f"(sum8 0x{cur_sum:02X}→0x{tpl_sum:02X})")
     return frames, notes
 
 
